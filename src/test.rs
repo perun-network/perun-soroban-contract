@@ -1,6 +1,6 @@
 #![cfg(test)]
 
-use crate::{get_channel_id, make_channel, get_channel};
+use crate::{get_channel_id, make_channel};
 
 use soroban_sdk::token;
 
