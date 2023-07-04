@@ -168,6 +168,7 @@ impl Adjudicator {
 
         // effects
         channel.control.closed = true;
+        channel.state = state.clone();
         channel.control.withdrawn_a = state.balances.bal_a == 0;
         channel.control.withdrawn_b = state.balances.bal_b == 0;
         if is_withdrawn(&channel) {
