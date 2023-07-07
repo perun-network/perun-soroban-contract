@@ -445,7 +445,7 @@ pub fn is_timelock_expired(env: &Env, channel: &Channel) -> bool {
         return false;
     }
     let current_time = env.ledger().timestamp();
-    return channel.control.timestamp + channel.params.challenge_duration < current_time;
+    return channel.control.timestamp + channel.params.challenge_duration <= current_time;
 }
 
 #[cfg(test)]

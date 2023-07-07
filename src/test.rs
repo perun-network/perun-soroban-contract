@@ -95,7 +95,7 @@ fn test_dispute() {
 
     t.set_ledger_time(
         t.env.ledger().get(),
-        t.env.ledger().timestamp() + t.params.challenge_duration + 1,
+        t.env.ledger().timestamp() + t.params.challenge_duration,
     );
 
     t.client.force_close(&t.channel_id);
@@ -141,7 +141,7 @@ fn test_malicious_dispute() {
 
     t.set_ledger_time(
         t.env.ledger().get(),
-        t.env.ledger().timestamp() + t.params.challenge_duration + 1,
+        t.env.ledger().timestamp() + t.params.challenge_duration,
     );
 
     t.client.force_close(&t.state.channel_id);
