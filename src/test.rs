@@ -14,6 +14,7 @@
 
 #![cfg(test)]
 
+use crate::{A, B};
 use crate::{get_channel_id};
 use ed25519_dalek::Keypair;
 use ed25519_dalek::Signer;
@@ -34,11 +35,11 @@ fn test_honest_payment() {
     t.client.open(&t.params, &t.state);
     t.verify_state(&t.state);
 
-    t.client.fund(&t.state.channel_id, &false);
+    t.client.fund(&t.state.channel_id, &A);
     t.verify_bal_contract(100);
     t.verify_bal_a(0);
 
-    t.client.fund(&t.state.channel_id, &true);
+    t.client.fund(&t.state.channel_id, &B);
     t.verify_bal_contract(300);
     t.verify_bal_b(0);
 
@@ -50,11 +51,11 @@ fn test_honest_payment() {
     t.verify_state(&t.state);
     t.verify_bal_contract(300);
 
-    t.client.withdraw(&t.state.channel_id, &false);
+    t.client.withdraw(&t.state.channel_id, &A);
     t.verify_bal_a(200);
     t.verify_bal_contract(100);
 
-    t.client.withdraw(&t.state.channel_id, &true);
+    t.client.withdraw(&t.state.channel_id, &B);
     t.verify_bal_b(100);
     t.verify_bal_contract(0);
 }
@@ -66,7 +67,7 @@ fn test_funding_abort() {
     t.client.open(&t.params, &t.state);
     t.verify_state(&t.state);
 
-    t.client.fund(&t.channel_id, &false);
+    t.client.fund(&t.channel_id, &A);
     t.verify_bal_contract(100);
     t.verify_bal_a(0);
 
@@ -81,11 +82,11 @@ fn test_dispute() {
     t.client.open(&t.params, &t.state);
     t.verify_state(&t.state);
 
-    t.client.fund(&t.state.channel_id, &false);
+    t.client.fund(&t.state.channel_id, &A);
     t.verify_bal_contract(100);
     t.verify_bal_a(0);
 
-    t.client.fund(&t.state.channel_id, &true);
+    t.client.fund(&t.state.channel_id, &B);
     t.verify_bal_contract(300);
     t.verify_bal_b(0);
 
@@ -102,11 +103,11 @@ fn test_dispute() {
     t.verify_state(&t.state);
     t.verify_bal_contract(300);
 
-    t.client.withdraw(&t.channel_id, &false);
+    t.client.withdraw(&t.channel_id, &A);
     t.verify_bal_a(200);
     t.verify_bal_contract(100);
 
-    t.client.withdraw(&t.channel_id, &true);
+    t.client.withdraw(&t.channel_id, &B);
     t.verify_bal_b(100);
     t.verify_bal_contract(0);
 }
@@ -117,11 +118,11 @@ fn test_malicious_dispute() {
     t.client.open(&t.params, &t.state);
     t.verify_state(&t.state);
 
-    t.client.fund(&t.state.channel_id, &false);
+    t.client.fund(&t.state.channel_id, &A);
     t.verify_bal_contract(100);
     t.verify_bal_a(0);
 
-    t.client.fund(&t.state.channel_id, &true);
+    t.client.fund(&t.state.channel_id, &B);
     t.verify_bal_contract(300);
     t.verify_bal_b(0);
 
@@ -148,11 +149,11 @@ fn test_malicious_dispute() {
     t.verify_state(&t.state);
     t.verify_bal_contract(300);
 
-    t.client.withdraw(&t.state.channel_id, &false);
+    t.client.withdraw(&t.state.channel_id, &A);
     t.verify_bal_a(200);
     t.verify_bal_contract(100);
 
-    t.client.withdraw(&t.state.channel_id, &true);
+    t.client.withdraw(&t.state.channel_id, &B);
     t.verify_bal_b(100);
     t.verify_bal_contract(0);
 }

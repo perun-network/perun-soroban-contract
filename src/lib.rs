@@ -101,6 +101,10 @@ pub struct Adjudicator;
 
 const CHANNELS: Symbol = Symbol::short("CHANNELS");
 
+const A: bool = false;
+
+const B: bool = !A;
+
 #[contractimpl]
 impl Adjudicator {
     pub fn open(env: Env, params: Params, state: State) -> Result<(), Error> {
@@ -148,14 +152,15 @@ impl Adjudicator {
         // checks
         let mut channel = get_channel(&env, &channel_id)?;
         let (actor, amount) = match party_idx {
-            false => {
+            A => {  // Fund for party A.
+                // Verify that A has not yet funded.
                 if channel.control.funded_a {
                     return Err(Error::AlreadyFunded);
                 }
                 channel.control.funded_a = true; // effect
                 (channel.params.a.addr.clone(), channel.state.balances.bal_a)
             }
-            true => {
+            B => {   // Fund for party B.
                 if channel.control.funded_b {
                     return Err(Error::AlreadyFunded);
                 }
@@ -277,14 +282,15 @@ impl Adjudicator {
             return Err(Error::WithdrawOnOpenChannel);
         }
         let (actor, amount) = match party_idx {
-            false => {
+            A => {
+                // We verify that A has not yet withdrawn (or 0 balance).
                 if channel.control.withdrawn_a {
                     return Err(Error::AlreadyFunded);
                 }
                 channel.control.withdrawn_a = true; // effect
                 (channel.params.a.addr.clone(), channel.state.balances.bal_a)
             }
-            true => {
+            B => {
                 if channel.control.withdrawn_b {
                     return Err(Error::AlreadyFunded);
                 }
