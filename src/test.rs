@@ -132,7 +132,7 @@ fn test_malicious_dispute() {
 
     t.send_to_a(50);
 
-    // malicious dispute by by B
+    // malicious dispute by B (where B still had more balance)
     t.client.dispute(&old_state, &old_sig_a, &old_sig_b);
     t.verify_state(&old_state);
 
