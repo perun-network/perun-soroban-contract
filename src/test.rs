@@ -14,7 +14,8 @@
 
 #![cfg(test)]
 
-use crate::{get_channel_id};
+use crate::get_channel_id;
+use crate::{A, B};
 use ed25519_dalek::Keypair;
 use ed25519_dalek::Signer;
 use rand::thread_rng;
@@ -34,11 +35,11 @@ fn test_honest_payment() {
     t.client.open(&t.params, &t.state);
     t.verify_state(&t.state);
 
-    t.client.fund(&t.state.channel_id, &false);
+    t.client.fund(&t.state.channel_id, &A);
     t.verify_bal_contract(100);
     t.verify_bal_a(0);
 
-    t.client.fund(&t.state.channel_id, &true);
+    t.client.fund(&t.state.channel_id, &B);
     t.verify_bal_contract(300);
     t.verify_bal_b(0);
 
@@ -50,11 +51,11 @@ fn test_honest_payment() {
     t.verify_state(&t.state);
     t.verify_bal_contract(300);
 
-    t.client.withdraw(&t.state.channel_id, &false);
+    t.client.withdraw(&t.state.channel_id, &A);
     t.verify_bal_a(200);
     t.verify_bal_contract(100);
 
-    t.client.withdraw(&t.state.channel_id, &true);
+    t.client.withdraw(&t.state.channel_id, &B);
     t.verify_bal_b(100);
     t.verify_bal_contract(0);
 }
@@ -66,7 +67,7 @@ fn test_funding_abort() {
     t.client.open(&t.params, &t.state);
     t.verify_state(&t.state);
 
-    t.client.fund(&t.channel_id, &false);
+    t.client.fund(&t.channel_id, &A);
     t.verify_bal_contract(100);
     t.verify_bal_a(0);
 
@@ -81,11 +82,11 @@ fn test_dispute() {
     t.client.open(&t.params, &t.state);
     t.verify_state(&t.state);
 
-    t.client.fund(&t.state.channel_id, &false);
+    t.client.fund(&t.state.channel_id, &A);
     t.verify_bal_contract(100);
     t.verify_bal_a(0);
 
-    t.client.fund(&t.state.channel_id, &true);
+    t.client.fund(&t.state.channel_id, &B);
     t.verify_bal_contract(300);
     t.verify_bal_b(0);
 
@@ -95,18 +96,18 @@ fn test_dispute() {
 
     t.set_ledger_time(
         t.env.ledger().get(),
-        t.env.ledger().timestamp() + t.params.challenge_duration + 1,
+        t.env.ledger().timestamp() + t.params.challenge_duration,
     );
 
     t.client.force_close(&t.channel_id);
     t.verify_state(&t.state);
     t.verify_bal_contract(300);
 
-    t.client.withdraw(&t.channel_id, &false);
+    t.client.withdraw(&t.channel_id, &A);
     t.verify_bal_a(200);
     t.verify_bal_contract(100);
 
-    t.client.withdraw(&t.channel_id, &true);
+    t.client.withdraw(&t.channel_id, &B);
     t.verify_bal_b(100);
     t.verify_bal_contract(0);
 }
@@ -117,11 +118,11 @@ fn test_malicious_dispute() {
     t.client.open(&t.params, &t.state);
     t.verify_state(&t.state);
 
-    t.client.fund(&t.state.channel_id, &false);
+    t.client.fund(&t.state.channel_id, &A);
     t.verify_bal_contract(100);
     t.verify_bal_a(0);
 
-    t.client.fund(&t.state.channel_id, &true);
+    t.client.fund(&t.state.channel_id, &B);
     t.verify_bal_contract(300);
     t.verify_bal_b(0);
 
@@ -131,7 +132,7 @@ fn test_malicious_dispute() {
 
     t.send_to_a(50);
 
-    // malicious dispute by by B
+    // malicious dispute by B (registering a state in which B still had more balance)
     t.client.dispute(&old_state, &old_sig_a, &old_sig_b);
     t.verify_state(&old_state);
 
@@ -141,18 +142,18 @@ fn test_malicious_dispute() {
 
     t.set_ledger_time(
         t.env.ledger().get(),
-        t.env.ledger().timestamp() + t.params.challenge_duration + 1,
+        t.env.ledger().timestamp() + t.params.challenge_duration,
     );
 
     t.client.force_close(&t.state.channel_id);
     t.verify_state(&t.state);
     t.verify_bal_contract(300);
 
-    t.client.withdraw(&t.state.channel_id, &false);
+    t.client.withdraw(&t.state.channel_id, &A);
     t.verify_bal_a(200);
     t.verify_bal_contract(100);
 
-    t.client.withdraw(&t.state.channel_id, &true);
+    t.client.withdraw(&t.state.channel_id, &B);
     t.verify_bal_b(100);
     t.verify_bal_contract(0);
 }
