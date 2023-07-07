@@ -1,13 +1,13 @@
 #![cfg(test)]
 
-use crate::{get_channel_id, make_channel};
+use crate::{get_channel_id};
 use ed25519_dalek::Keypair;
 use ed25519_dalek::Signer;
 use rand::thread_rng;
 use soroban_sdk::xdr::ToXdr;
 use soroban_sdk::{token, IntoVal};
 
-use super::{Adjudicator, AdjudicatorClient, Balances, Control, Params, Participant, State};
+use super::{Adjudicator, AdjudicatorClient, Balances, Params, Participant, State};
 use soroban_sdk::{
     testutils::{Address as _, BytesN as _, Ledger, LedgerInfo},
     Address, BytesN, Env,
@@ -15,7 +15,7 @@ use soroban_sdk::{
 use token::Client as TokenClient;
 
 #[test]
-fn test_complete() {
+fn test_honest_payment() {
     let mut t = setup(10, 100, 200, true);
     t.client.open(&t.params, &t.state);
     t.verify_state(&t.state);
@@ -77,9 +77,53 @@ fn test_dispute() {
 
     t.send_to_a(100);
 
-    let disp_state = t.state.clone();
+    t.client.dispute(&t.state, &t.sig_a(), &t.sig_b());
 
-    t.client.dispute(&disp_state, &t.sig_a(), &t.sig_b());
+    t.set_ledger_time(
+        t.env.ledger().get(),
+        t.env.ledger().timestamp() + t.params.challenge_duration + 1,
+    );
+
+    t.client.force_close(&t.channel_id);
+    t.verify_state(&t.state);
+    t.verify_bal_contract(300);
+
+    t.client.withdraw(&t.channel_id, &false);
+    t.verify_bal_a(200);
+    t.verify_bal_contract(100);
+
+    t.client.withdraw(&t.channel_id, &true);
+    t.verify_bal_b(100);
+    t.verify_bal_contract(0);
+}
+
+#[test]
+fn test_malicious_dispute() {
+    let mut t = setup(10, 100, 200, true);
+    t.client.open(&t.params, &t.state);
+    t.verify_state(&t.state);
+
+    t.client.fund(&t.state.channel_id, &false);
+    t.verify_bal_contract(100);
+    t.verify_bal_a(0);
+
+    t.client.fund(&t.state.channel_id, &true);
+    t.verify_bal_contract(300);
+    t.verify_bal_b(0);
+
+    t.send_to_a(50);
+
+    let (old_state, old_sig_a, old_sig_b) = t.state_and_sigs();
+
+    t.send_to_a(50);
+
+    // malicious dispute by by B
+    t.client.dispute(&old_state, &old_sig_a, &old_sig_b);
+    t.verify_state(&old_state);
+
+    // dispute with latest state by A
+    t.client.dispute(&t.state, &t.sig_a(), &t.sig_b());
+    t.verify_state(&t.state);
 
     t.set_ledger_time(
         t.env.ledger().get(),
@@ -95,7 +139,6 @@ fn test_dispute() {
     t.verify_bal_contract(100);
 
     t.client.withdraw(&t.state.channel_id, &true);
-
     t.verify_bal_b(100);
     t.verify_bal_contract(0);
 }
@@ -281,5 +324,9 @@ impl Test<'_> {
             timestamp: new_time,
             ..params
         });
+    }
+
+    fn state_and_sigs(&self) -> (State, BytesN<64>, BytesN<64>) {
+        (self.state.clone(), self.sig_a(), self.sig_b())
     }
 }
