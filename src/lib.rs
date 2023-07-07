@@ -57,7 +57,7 @@ pub struct Balances {
 
 #[contracttype]
 #[derive(Clone, Debug, Eq, PartialEq)]
-/// Participant represents a participant to the channel.
+/// Participant represents a participant in the channel.
 /// All channels have two participants.
 pub struct Participant {
     /// addr represents the participant's on-chain address.
@@ -82,7 +82,7 @@ pub struct State {
     /// a strict happened-before relation between all states that belong to a channel.
     pub version: u64,
     /// finalized signals whether a state is considered final. A final state can be closed
-    /// gracefully using the `close` endpoint together both participant's signatures on the state.
+    /// gracefully by using the `close` endpoint with both participants' signatures on the state.
     pub finalized: bool,
 }
 
@@ -154,7 +154,6 @@ const B: bool = !A;
 
 #[contractimpl]
 impl Adjudicator {
-
     /// open opens a channel in the contract instance with the given parameters
     /// and initial channel state.
     pub fn open(env: Env, params: Params, state: State) -> Result<(), Error> {
@@ -209,7 +208,8 @@ impl Adjudicator {
         env.events()
             .publish((CHANNELS, Symbol::short("open")), channel.clone());
         if is_funded(&channel) {
-            env.events().publish((CHANNELS, Symbol::short("fund_c")), channel);
+            env.events()
+                .publish((CHANNELS, Symbol::short("fund_c")), channel);
         }
 
         Ok(())
@@ -223,7 +223,8 @@ impl Adjudicator {
         // We get the channel with the channel id.
         let mut channel = get_channel(&env, &channel_id)?;
         let (actor, amount) = match party_idx {
-            A => {  // Fund for party A.
+            A => {
+                // Fund for party A.
                 // Verify that A has not yet funded.
                 if channel.control.funded_a {
                     return Err(Error::AlreadyFunded);
@@ -234,7 +235,8 @@ impl Adjudicator {
                 channel.control.funded_a = true; // effect
                 (channel.params.a.addr.clone(), channel.state.balances.bal_a)
             }
-            B => {   // Fund for party B.
+            B => {
+                // Fund for party B.
                 if channel.control.funded_b {
                     return Err(Error::AlreadyFunded);
                 }
@@ -250,10 +252,13 @@ impl Adjudicator {
         // set the updated channel in the contracts channel map storage
         set_channel(&env, &channel);
         // Emit fund event.
-        env.events()
-            .publish((CHANNELS, Symbol::short("fund")), (channel.clone(), party_idx));
+        env.events().publish(
+            (CHANNELS, Symbol::short("fund")),
+            (channel.clone(), party_idx),
+        );
         if is_funded(&channel) {
-            env.events().publish((CHANNELS, Symbol::short("fund_c")), channel.clone());
+            env.events()
+                .publish((CHANNELS, Symbol::short("fund_c")), channel.clone());
         }
 
         // interact
@@ -264,7 +269,7 @@ impl Adjudicator {
         Ok(())
     }
 
-    // close gracefully closed a channel, providing a (final) signed state.
+    // close gracefully closes a channel, providing a (final) signed state.
     pub fn close(
         env: Env,
         state: State,
@@ -302,12 +307,15 @@ impl Adjudicator {
         channel.control.withdrawn_b = state.balances.bal_b == 0;
 
         // Emit closed event.
-        env.events().publish((CHANNELS, Symbol::short("closed")), channel.clone());
+        env.events()
+            .publish((CHANNELS, Symbol::short("closed")), channel.clone());
 
-        if is_withdrawn(&channel) { // If the channel is withdrawn at this point (both balances 0)
-                                    // we can already delete it from contract storage and
-                                    // emit a withdraw_complete event.
-            env.events().publish((CHANNELS, Symbol::short("pay_c")), channel.clone());
+        if is_withdrawn(&channel) {
+            // If the channel is withdrawn at this point (both balances 0)
+            // we can already delete it from contract storage and
+            // emit a withdraw_complete event.
+            env.events()
+                .publish((CHANNELS, Symbol::short("pay_c")), channel.clone());
             delete_channel(&env, &channel.state.channel_id)
         } else {
             // Write the updated channel to contract storage.
@@ -317,7 +325,7 @@ impl Adjudicator {
         Ok(())
     }
 
-    /// force_close forcibly closed a channel after it has been disputed at least once and the 
+    /// force_close forcibly closed a channel after it has been disputed at least once and the
     /// relative timelock (challenge_duration) has elapsed since the latest dispute.
     pub fn force_close(env: Env, channel_id: BytesN<32>) -> Result<(), Error> {
         // checks
@@ -344,10 +352,12 @@ impl Adjudicator {
         channel.control.withdrawn_a = channel.state.balances.bal_a == 0;
         channel.control.withdrawn_b = channel.state.balances.bal_b == 0;
         // Emit force_closed event.
-        env.events().publish((CHANNELS, Symbol::short("f_closed")), channel.clone());
+        env.events()
+            .publish((CHANNELS, Symbol::short("f_closed")), channel.clone());
         if is_withdrawn(&channel) {
             // Emit withdraw_complete event and delete the channel.
-            env.events().publish((CHANNELS, Symbol::short("pay_c")), channel.clone());
+            env.events()
+                .publish((CHANNELS, Symbol::short("pay_c")), channel.clone());
             delete_channel(&env, &channel.state.channel_id)
         } else {
             set_channel(&env, &channel);
@@ -374,7 +384,7 @@ impl Adjudicator {
         if channel.control.closed {
             return Err(Error::DisputeOnClosedChannel);
         }
-        // We verify that the new state is a valid state transition from the old state.
+        // We verify that the new state results from a valid state transition from the old state.
         if !is_valid_state_transition(&channel.state, &new_state) {
             return Err(Error::InvalidStateTransition);
         }
@@ -398,8 +408,8 @@ impl Adjudicator {
         set_channel(&env, &channel);
 
         // Emit a dispute event.
-        env.events().publish((CHANNELS, Symbol::short("dispute")), channel.clone());
-
+        env.events()
+            .publish((CHANNELS, Symbol::short("dispute")), channel.clone());
 
         Ok(())
     }
@@ -435,12 +445,16 @@ impl Adjudicator {
         actor.require_auth();
 
         // Emit a withdraw event with the party index.
-        env.events().publish((CHANNELS, Symbol::short("withdraw")), (channel.clone(), party_idx));
+        env.events().publish(
+            (CHANNELS, Symbol::short("withdraw")),
+            (channel.clone(), party_idx),
+        );
 
         // effects
         if is_withdrawn(&channel) {
             // If the channel is withdrawn completely, emit an according event and delete it.
-            env.events().publish((CHANNELS, Symbol::short("pay_c")), channel.clone());
+            env.events()
+                .publish((CHANNELS, Symbol::short("pay_c")), channel.clone());
             delete_channel(&env, &channel_id);
         } else {
             set_channel(&env, &channel);
@@ -449,7 +463,7 @@ impl Adjudicator {
         // interact
         let contract = env.current_contract_address();
         let token_client = token::Client::new(&env, &channel.state.balances.token);
-        // transfer the correct amount the the withdrawing party.
+        // transfer the correct amount to the withdrawing party.
         token_client.transfer(&contract, &actor, &amount);
 
         Ok(())
@@ -507,14 +521,14 @@ impl Adjudicator {
         Ok(())
     }
 
-    /// get_channel returns the current channel with the given channel_id in the contracts
+    /// get_channel returns the current channel with the given channel_id in the contract's
     /// channel storage.
     pub fn get_channel(env: Env, channel_id: BytesN<32>) -> Result<Channel, Error> {
         get_channel(&env, &channel_id)
     }
 }
 
-/// get_channel returns the channel with the given id from the environments channel map or an error if it does not exist.
+/// get_channel returns the channel with the given id from the environment's channel map or an error if it does not exist.
 pub fn get_channel(env: &Env, id: &BytesN<32>) -> Result<Channel, Error> {
     let channels: Map<BytesN<32>, Channel> = env
         .storage()
@@ -541,7 +555,7 @@ pub fn set_channel(env: &Env, channel: &Channel) {
     env.storage().set(&CHANNELS, &channels);
 }
 
-/// delete_channel deletes the channel with the given id from the environments channel map.
+/// delete_channel deletes the channel with the given id from the environment's channel map.
 pub fn delete_channel(env: &Env, channel_id: &BytesN<32>) {
     let mut channels: Map<BytesN<32>, Channel> = env
         .storage()
@@ -577,8 +591,9 @@ pub fn is_valid_state_transition(old: &State, new: &State) -> bool {
     // opening and funding a channel. To allow a force close the state must be disputed first.
     if old.version == 0 && new.version == 0 {
         return old.eq(&new);
-    } else if old.version >= new.version {  // Aside from the edge-case above, the version must
-                                            // strictly increase.
+    } else if old.version >= new.version {
+        // Aside from the edge-case above, the version must
+        // strictly increase.
         return false;
     }
     // The state transition is only valid if they share the same channel id.

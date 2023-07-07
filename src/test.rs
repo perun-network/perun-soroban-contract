@@ -14,8 +14,8 @@
 
 #![cfg(test)]
 
+use crate::get_channel_id;
 use crate::{A, B};
-use crate::{get_channel_id};
 use ed25519_dalek::Keypair;
 use ed25519_dalek::Signer;
 use rand::thread_rng;
@@ -132,7 +132,7 @@ fn test_malicious_dispute() {
 
     t.send_to_a(50);
 
-    // malicious dispute by B (where B still had more balance)
+    // malicious dispute by B (registering a state in which B still had more balance)
     t.client.dispute(&old_state, &old_sig_a, &old_sig_b);
     t.verify_state(&old_state);
 
