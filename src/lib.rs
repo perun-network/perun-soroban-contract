@@ -1,5 +1,7 @@
 #![no_std]
-use soroban_sdk::{contractimpl, contracterror, Env, Symbol, contracttype, BytesN, Address, xdr::ToXdr, Map, token};
+use soroban_sdk::{
+    contracterror, contractimpl, contracttype, token, xdr::ToXdr, Address, BytesN, Env, Map, Symbol,
+};
 
 #[contracterror]
 #[derive(Copy, Clone, Debug, Eq, PartialEq, PartialOrd, Ord)]
@@ -73,7 +75,6 @@ pub struct Control {
     pub timestamp: u64,
 }
 
-
 #[contracttype]
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct Channel {
@@ -92,7 +93,7 @@ impl Adjudicator {
         // checks
         let cid = get_channel_id(&env, &params);
         if !cid.eq(&state.channel_id) {
-            return Err(Error::ChannelIDMissmatch)
+            return Err(Error::ChannelIDMissmatch);
         }
         if state.version != 0 {
             return Err(Error::InvalidVersionNumber);
@@ -101,7 +102,11 @@ impl Adjudicator {
             return Err(Error::OpenOnFinalState);
         }
 
-        let mut channels: Map<BytesN<32>, Channel> = env.storage().get(&CHANNELS).unwrap_or(Ok(Map::new(&env))).unwrap();
+        let mut channels: Map<BytesN<32>, Channel> = env
+            .storage()
+            .get(&CHANNELS)
+            .unwrap_or(Ok(Map::new(&env)))
+            .unwrap();
         if channels.contains_key(cid.clone()) {
             return Err(Error::ChannelAlreadyExists);
         }
@@ -119,7 +124,8 @@ impl Adjudicator {
         let channel = make_channel(&params, &state, &control);
         channels.set(cid, channel.clone());
         env.storage().set(&CHANNELS, &channels);
-        env.events().publish((CHANNELS, Symbol::short("open")), channel);
+        env.events()
+            .publish((CHANNELS, Symbol::short("open")), channel);
         Ok(())
     }
 
@@ -132,14 +138,16 @@ impl Adjudicator {
                 if channel.control.funded_a {
                     return Err(Error::AlreadyFunded);
                 }
-                channel.control.funded_a = true;    // effect
-                (channel.params.a.addr.clone(), channel.state.balances.bal_a)},
+                channel.control.funded_a = true; // effect
+                (channel.params.a.addr.clone(), channel.state.balances.bal_a)
+            }
             true => {
                 if channel.control.funded_b {
                     return Err(Error::AlreadyFunded);
                 }
-                channel.control.funded_b = true;    // effect
-                (channel.params.b.addr.clone(), channel.state.balances.bal_b)},
+                channel.control.funded_b = true; // effect
+                (channel.params.b.addr.clone(), channel.state.balances.bal_b)
+            }
         };
 
         // effects
@@ -153,7 +161,12 @@ impl Adjudicator {
         Ok(())
     }
 
-    pub fn close(env: Env, state: State, sig_a: BytesN<64>, sig_b: BytesN<64>) -> Result<(), Error> {
+    pub fn close(
+        env: Env,
+        state: State,
+        sig_a: BytesN<64>,
+        sig_b: BytesN<64>,
+    ) -> Result<(), Error> {
         // checks
         if !state.finalized {
             return Err(Error::CloseOnNonFinalState);
@@ -163,8 +176,10 @@ impl Adjudicator {
             return Err(Error::OperationOnUnfundedChannel);
         }
         let message = state.clone().to_xdr(&env);
-        env.crypto().ed25519_verify(&channel.params.a.pubkey, &message, &sig_a);
-        env.crypto().ed25519_verify(&channel.params.b.pubkey, &message, &sig_b);
+        env.crypto()
+            .ed25519_verify(&channel.params.a.pubkey, &message, &sig_a);
+        env.crypto()
+            .ed25519_verify(&channel.params.b.pubkey, &message, &sig_b);
 
         // effects
         channel.control.closed = true;
@@ -176,7 +191,7 @@ impl Adjudicator {
         } else {
             set_channel(&env, &channel);
         }
-        
+
         Ok(())
     }
 
@@ -209,7 +224,12 @@ impl Adjudicator {
         Ok(())
     }
 
-    pub fn dispute(env: Env, new_state: State, sig_a: BytesN<64>, sig_b: BytesN<64>) -> Result<(), Error> {
+    pub fn dispute(
+        env: Env,
+        new_state: State,
+        sig_a: BytesN<64>,
+        sig_b: BytesN<64>,
+    ) -> Result<(), Error> {
         // checks
         let mut channel = get_channel(&env, &new_state.channel_id)?;
         if !is_funded(&channel) {
@@ -222,8 +242,10 @@ impl Adjudicator {
             return Err(Error::InvalidStateTransition);
         }
         let message = new_state.clone().to_xdr(&env);
-        env.crypto().ed25519_verify(&channel.params.a.pubkey, &message, &sig_a);
-        env.crypto().ed25519_verify(&channel.params.b.pubkey, &message, &sig_b);
+        env.crypto()
+            .ed25519_verify(&channel.params.a.pubkey, &message, &sig_a);
+        env.crypto()
+            .ed25519_verify(&channel.params.b.pubkey, &message, &sig_b);
 
         // effects
         channel.control.disputed = true;
@@ -246,13 +268,15 @@ impl Adjudicator {
                     return Err(Error::AlreadyFunded);
                 }
                 channel.control.withdrawn_a = true; // effect
-                (channel.params.a.addr.clone(), channel.state.balances.bal_a)},
+                (channel.params.a.addr.clone(), channel.state.balances.bal_a)
+            }
             true => {
                 if channel.control.withdrawn_b {
                     return Err(Error::AlreadyFunded);
                 }
                 channel.control.withdrawn_b = true; // effect
-                (channel.params.b.addr.clone(), channel.state.balances.bal_b)},
+                (channel.params.b.addr.clone(), channel.state.balances.bal_b)
+            }
         };
         actor.require_auth();
 
@@ -285,7 +309,7 @@ impl Adjudicator {
         if channel.control.disputed {
             return Err(Error::AbortFundingOnDisputedChannel);
         }
-        
+
         // abort makes no sense if no party has funded yet
         if !channel.control.funded_a && !channel.control.funded_b {
             return Err(Error::AbortFundingWithoutFunds);
@@ -293,8 +317,14 @@ impl Adjudicator {
 
         // at this point we know that exactly one party has funded the channel
         let (actor, amount) = match channel.control.funded_a {
-            true => (channel.params.a.addr.clone(), channel.state.balances.bal_a.clone()),
-            false => (channel.params.b.addr.clone(), channel.state.balances.bal_b.clone()),
+            true => (
+                channel.params.a.addr.clone(),
+                channel.state.balances.bal_a.clone(),
+            ),
+            false => (
+                channel.params.b.addr.clone(),
+                channel.state.balances.bal_b.clone(),
+            ),
         };
         // we don't want anyone arbitrarily aborting channels that they are not part of in
         // the channel's opening phase
@@ -318,7 +348,11 @@ impl Adjudicator {
 
 // get_channel returns the channel with the given id from the environments channel map or an error if it does not exist.
 pub fn get_channel(env: &Env, id: &BytesN<32>) -> Result<Channel, Error> {
-    let channels: Map<BytesN<32>, Channel> = env.storage().get(&CHANNELS).unwrap_or(Ok(Map::new(&env))).unwrap();
+    let channels: Map<BytesN<32>, Channel> = env
+        .storage()
+        .get(&CHANNELS)
+        .unwrap_or(Ok(Map::new(&env)))
+        .unwrap();
     if !channels.contains_key(id.clone()) {
         return Err(Error::ChannelNotFound);
     }
@@ -330,21 +364,29 @@ pub fn get_channel(env: &Env, id: &BytesN<32>) -> Result<Channel, Error> {
 
 // set_channel sets the given channel in the environments channel map.
 pub fn set_channel(env: &Env, channel: &Channel) {
-    let mut channels: Map<BytesN<32>, Channel> = env.storage().get(&CHANNELS).unwrap_or(Ok(Map::new(&env))).unwrap();
+    let mut channels: Map<BytesN<32>, Channel> = env
+        .storage()
+        .get(&CHANNELS)
+        .unwrap_or(Ok(Map::new(&env)))
+        .unwrap();
     channels.set(channel.state.channel_id.clone(), channel.clone());
     env.storage().set(&CHANNELS, &channels);
 }
 
 // delete_channel deletes the channel with the given id from the environments channel map.
 pub fn delete_channel(env: &Env, channel_id: &BytesN<32>) {
-    let mut channels: Map<BytesN<32>, Channel> = env.storage().get(&CHANNELS).unwrap_or(Ok(Map::new(&env))).unwrap();
+    let mut channels: Map<BytesN<32>, Channel> = env
+        .storage()
+        .get(&CHANNELS)
+        .unwrap_or(Ok(Map::new(&env)))
+        .unwrap();
     channels.remove(channel_id.clone());
     env.storage().set(&CHANNELS, &channels);
 }
 
 pub fn get_channel_id(env: &Env, params: &Params) -> BytesN<32> {
     let data = params.clone().to_xdr(env);
-    return env.crypto().sha256(&data)
+    return env.crypto().sha256(&data);
 }
 
 pub fn make_channel(params: &Params, state: &State, control: &Control) -> Channel {
@@ -352,7 +394,7 @@ pub fn make_channel(params: &Params, state: &State, control: &Control) -> Channe
         params: params.clone(),
         state: state.clone(),
         control: control.clone(),
-    }
+    };
 }
 
 pub fn is_valid_state_transition(old: &State, new: &State) -> bool {

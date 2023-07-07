@@ -1,16 +1,17 @@
 #![cfg(test)]
 
-
 use crate::{get_channel_id, make_channel};
-
 use ed25519_dalek::Keypair;
 use ed25519_dalek::Signer;
 use rand::thread_rng;
 use soroban_sdk::xdr::ToXdr;
 use soroban_sdk::{token, IntoVal};
 
-use super::{Adjudicator, AdjudicatorClient, Params, State, Control, Participant, Balances};
-use soroban_sdk::{Env, testutils::{Address as _, BytesN as _}, Address, BytesN};
+use super::{Adjudicator, AdjudicatorClient, Balances, Control, Params, Participant, State};
+use soroban_sdk::{
+    testutils::{Address as _, BytesN as _, Ledger, LedgerInfo},
+    Address, BytesN, Env,
+};
 use token::Client as TokenClient;
 
 #[test]
@@ -22,7 +23,7 @@ fn test_complete() {
     t.client.fund(&t.state.channel_id, &false);
     t.verify_bal_contract(100);
     t.verify_bal_a(0);
-    
+
     t.client.fund(&t.state.channel_id, &true);
     t.verify_bal_contract(300);
     t.verify_bal_b(0);
@@ -38,7 +39,7 @@ fn test_complete() {
     t.client.withdraw(&t.state.channel_id, &false);
     t.verify_bal_a(200);
     t.verify_bal_contract(100);
-    
+
     t.client.withdraw(&t.state.channel_id, &true);
     t.verify_bal_b(100);
     t.verify_bal_contract(0);
@@ -50,7 +51,7 @@ fn test_funding_abort() {
 
     t.client.open(&t.params, &t.state);
     t.verify_state(&t.state);
-    
+
     t.client.fund(&t.channel_id, &false);
     t.verify_bal_contract(100);
     t.verify_bal_a(0);
@@ -60,6 +61,44 @@ fn test_funding_abort() {
     t.verify_bal_a(100);
 }
 
+#[test]
+fn test_dispute() {
+    let mut t = setup(10, 100, 200, true);
+    t.client.open(&t.params, &t.state);
+    t.verify_state(&t.state);
+
+    t.client.fund(&t.state.channel_id, &false);
+    t.verify_bal_contract(100);
+    t.verify_bal_a(0);
+
+    t.client.fund(&t.state.channel_id, &true);
+    t.verify_bal_contract(300);
+    t.verify_bal_b(0);
+
+    t.send_to_a(100);
+
+    let disp_state = t.state.clone();
+
+    t.client.dispute(&disp_state, &t.sig_a(), &t.sig_b());
+
+    t.set_ledger_time(
+        t.env.ledger().get(),
+        t.env.ledger().timestamp() + t.params.challenge_duration + 1,
+    );
+
+    t.client.force_close(&t.state.channel_id);
+    t.verify_state(&t.state);
+    t.verify_bal_contract(300);
+
+    t.client.withdraw(&t.state.channel_id, &false);
+    t.verify_bal_a(200);
+    t.verify_bal_contract(100);
+
+    t.client.withdraw(&t.state.channel_id, &true);
+
+    t.verify_bal_b(100);
+    t.verify_bal_contract(0);
+}
 
 fn sign(e: &Env, signer: &Keypair, payload: &State) -> BytesN<64> {
     let mut heap = [0u8; 1000];
@@ -78,15 +117,32 @@ fn generate_keypair() -> Keypair {
     Keypair::generate(&mut thread_rng())
 }
 
-fn setup(challenge_duration: u64, bal_a: i128, bal_b: i128, mock_auth: bool) ->  Test<'static> {
+fn setup(challenge_duration: u64, bal_a: i128, bal_b: i128, mock_auth: bool) -> Test<'static> {
     let e = Env::default();
+
+    let ledgerinf = LedgerInfo {
+        timestamp: 0,
+        protocol_version: 1,
+        sequence_number: 10,
+        network_id: Default::default(),
+        base_reserve: 10,
+    };
+
+    e.ledger().set(ledgerinf.clone());
+
     if mock_auth {
         e.mock_all_auths();
     }
     let key_alice = generate_keypair();
     let key_bob = generate_keypair();
-    let alice = Participant { addr: Address::random(&e), pubkey: public_key(&e, &key_alice) };
-    let bob = Participant { addr: Address::random(&e), pubkey: public_key(&e, &key_bob) };
+    let alice = Participant {
+        addr: Address::random(&e),
+        pubkey: public_key(&e, &key_alice),
+    };
+    let bob = Participant {
+        addr: Address::random(&e),
+        pubkey: public_key(&e, &key_bob),
+    };
     let token = TokenClient::new(&e, &e.register_stellar_asset_contract(Address::random(&e)));
     token.mint(&alice.addr, &bal_a);
     token.mint(&bob.addr, &bal_b);
@@ -107,8 +163,20 @@ fn setup(challenge_duration: u64, bal_a: i128, bal_b: i128, mock_auth: bool) -> 
         version: 0,
         finalized: false,
     };
-    let client = AdjudicatorClient::new(&e, &e.register_contract(None, Adjudicator{}));
-    Test { env: e, alice, bob, key_alice, key_bob, params, channel_id, state, client, token }
+    let client = AdjudicatorClient::new(&e, &e.register_contract(None, Adjudicator {}));
+    Test {
+        env: e,
+        ledger_info: ledgerinf,
+        alice,
+        bob,
+        key_alice,
+        key_bob,
+        params,
+        channel_id,
+        state,
+        client,
+        token,
+    }
 }
 
 fn verify_state(t: &Test, state: &State) {
@@ -123,6 +191,7 @@ fn sign_state(t: &Test, state: &State) -> (BytesN<64>, BytesN<64>) {
 
 struct Test<'a> {
     env: Env,
+    ledger_info: LedgerInfo,
     alice: Participant,
     bob: Participant,
     key_alice: Keypair,
@@ -132,7 +201,7 @@ struct Test<'a> {
     state: State,
     client: AdjudicatorClient<'a>,
     token: TokenClient<'a>,
-} 
+}
 
 impl Test<'_> {
     fn verify_state(&self, state: &State) {
@@ -150,32 +219,37 @@ impl Test<'_> {
     }
 
     fn send_to_a(&mut self, amt: i128) {
-        self.update(State { 
-            channel_id: self.state.channel_id.clone(), 
-            balances: Balances { 
-                token: self.state.balances.token.clone(), 
-                bal_a: self.state.balances.bal_a + amt, 
-                bal_b: self.state.balances.bal_b - amt }, 
-            version: self.state.version +1, 
-            finalized: self.state.finalized })
+        self.update(State {
+            channel_id: self.state.channel_id.clone(),
+            balances: Balances {
+                token: self.state.balances.token.clone(),
+                bal_a: self.state.balances.bal_a + amt,
+                bal_b: self.state.balances.bal_b - amt,
+            },
+            version: self.state.version + 1,
+            finalized: self.state.finalized,
+        })
     }
 
     fn send_to_b(&mut self, amt: i128) {
-        self.update(State { 
-            channel_id: self.state.channel_id.clone(), 
-            balances: Balances { 
-                token: self.state.balances.token.clone(), 
-                bal_a: self.state.balances.bal_a - amt, 
-                bal_b: self.state.balances.bal_b + amt }, 
-            version: self.state.version +1, 
-            finalized: self.state.finalized })
+        self.update(State {
+            channel_id: self.state.channel_id.clone(),
+            balances: Balances {
+                token: self.state.balances.token.clone(),
+                bal_a: self.state.balances.bal_a - amt,
+                bal_b: self.state.balances.bal_b + amt,
+            },
+            version: self.state.version + 1,
+            finalized: self.state.finalized,
+        })
     }
 
     fn finalize(&mut self) {
-        self.update(State { 
-            version: self.state.version +1, 
+        self.update(State {
+            version: self.state.version + 1,
             finalized: true,
-            ..self.state.clone() })
+            ..self.state.clone()
+        })
     }
 
     fn sig_a(&self) -> BytesN<64> {
@@ -200,5 +274,12 @@ impl Test<'_> {
 
     fn verify_bal_contract(&self, bal: i128) {
         assert_eq!(self.token.balance(&self.client.address), bal);
+    }
+
+    fn set_ledger_time(&mut self, params: LedgerInfo, new_time: u64) {
+        self.env.ledger().set(LedgerInfo {
+            timestamp: new_time,
+            ..params
+        });
     }
 }
