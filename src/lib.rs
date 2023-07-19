@@ -269,7 +269,7 @@ impl Adjudicator {
         Ok(())
     }
 
-    // close gracefully closes a channel, providing a (final) signed state.
+    /// close gracefully closes a channel, providing a (final) signed state.
     pub fn close(
         env: Env,
         state: State,
@@ -325,7 +325,7 @@ impl Adjudicator {
         Ok(())
     }
 
-    /// force_close forcibly closed a channel after it has been disputed at least once and the
+    /// force_close forcibly closes a channel after it has been disputed at least once and the
     /// relative timelock (challenge_duration) has elapsed since the latest dispute.
     pub fn force_close(env: Env, channel_id: BytesN<32>) -> Result<(), Error> {
         // checks
