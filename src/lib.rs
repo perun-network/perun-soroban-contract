@@ -14,7 +14,8 @@
 
 #![no_std]
 use soroban_sdk::{
-    contracterror, contractimpl, contracttype, token, xdr::ToXdr, Address, BytesN, Env, Map, Symbol,
+    contract,
+    contracterror, contractimpl, contracttype, token, xdr::ToXdr, Address, BytesN, Env, Map, Symbol, symbol_short,
 };
 
 #[contracterror]
@@ -141,16 +142,19 @@ pub struct Channel {
     pub control: Control,
 }
 
-pub struct Adjudicator;
 
 /// CHANNELS is the symbol that references the contract's
 /// channel map as a map from channel_id to the respective channel.
 /// Map<BytesN<32>, Channel>
-const CHANNELS: Symbol = Symbol::short("CHANNELS");
+const CHANNELS: Symbol = symbol_short!("CHANNELS");
 
 const A: bool = false;
 
 const B: bool = !A;
+
+#[contract]
+pub struct Adjudicator;
+
 
 #[contractimpl]
 impl Adjudicator {
@@ -176,9 +180,9 @@ impl Adjudicator {
         // Obtain the current channel map of the contract.
         let mut channels: Map<BytesN<32>, Channel> = env
             .storage()
+            .instance()
             .get(&CHANNELS)
-            .unwrap_or(Ok(Map::new(&env)))
-            .unwrap();
+            .unwrap_or(Map::new(&env));
         // If the contract already knows of a channel with the same channel_id, open fails.
         if channels.contains_key(cid.clone()) {
             return Err(Error::ChannelAlreadyExists);
@@ -203,13 +207,13 @@ impl Adjudicator {
         let channel = make_channel(&params, &state, &control);
         // Insert the channel into the contract's channel map.
         channels.set(cid, channel.clone());
-        env.storage().set(&CHANNELS, &channels.clone());
+        env.storage().instance().set(&CHANNELS, &channels.clone());
         // Emit open event.
         env.events()
-            .publish((CHANNELS, Symbol::short("open")), channel.clone());
+            .publish((CHANNELS, symbol_short!("open")), channel.clone());
         if is_funded(&channel) {
             env.events()
-                .publish((CHANNELS, Symbol::short("fund_c")), channel);
+                .publish((CHANNELS, symbol_short!("fund_c")), channel);
         }
 
         Ok(())
@@ -253,12 +257,12 @@ impl Adjudicator {
         set_channel(&env, &channel);
         // Emit fund event.
         env.events().publish(
-            (CHANNELS, Symbol::short("fund")),
+            (CHANNELS, symbol_short!("fund")),
             (channel.clone(), party_idx),
         );
         if is_funded(&channel) {
             env.events()
-                .publish((CHANNELS, Symbol::short("fund_c")), channel.clone());
+                .publish((CHANNELS, symbol_short!("fund_c")), channel.clone());
         }
 
         // interact
@@ -308,14 +312,14 @@ impl Adjudicator {
 
         // Emit closed event.
         env.events()
-            .publish((CHANNELS, Symbol::short("closed")), channel.clone());
+            .publish((CHANNELS, symbol_short!("closed")), channel.clone());
 
         if is_withdrawn(&channel) {
             // If the channel is withdrawn at this point (both balances 0)
             // we can already delete it from contract storage and
             // emit a withdraw_complete event.
             env.events()
-                .publish((CHANNELS, Symbol::short("pay_c")), channel.clone());
+                .publish((CHANNELS, symbol_short!("pay_c")), channel.clone());
             delete_channel(&env, &channel.state.channel_id)
         } else {
             // Write the updated channel to contract storage.
@@ -353,11 +357,11 @@ impl Adjudicator {
         channel.control.withdrawn_b = channel.state.balances.bal_b == 0;
         // Emit force_closed event.
         env.events()
-            .publish((CHANNELS, Symbol::short("f_closed")), channel.clone());
+            .publish((CHANNELS, symbol_short!("f_closed")), channel.clone());
         if is_withdrawn(&channel) {
             // Emit withdraw_complete event and delete the channel.
             env.events()
-                .publish((CHANNELS, Symbol::short("pay_c")), channel.clone());
+                .publish((CHANNELS, symbol_short!("pay_c")), channel.clone());
             delete_channel(&env, &channel.state.channel_id)
         } else {
             set_channel(&env, &channel);
@@ -409,7 +413,7 @@ impl Adjudicator {
 
         // Emit a dispute event.
         env.events()
-            .publish((CHANNELS, Symbol::short("dispute")), channel.clone());
+            .publish((CHANNELS, symbol_short!("dispute")), channel.clone());
 
         Ok(())
     }
@@ -446,7 +450,7 @@ impl Adjudicator {
 
         // Emit a withdraw event with the party index.
         env.events().publish(
-            (CHANNELS, Symbol::short("withdraw")),
+            (CHANNELS, symbol_short!("withdraw")),
             (channel.clone(), party_idx),
         );
 
@@ -454,7 +458,7 @@ impl Adjudicator {
         if is_withdrawn(&channel) {
             // If the channel is withdrawn completely, emit an according event and delete it.
             env.events()
-                .publish((CHANNELS, Symbol::short("pay_c")), channel.clone());
+                .publish((CHANNELS, symbol_short!("pay_c")), channel.clone());
             delete_channel(&env, &channel_id);
         } else {
             set_channel(&env, &channel);
@@ -532,15 +536,15 @@ impl Adjudicator {
 pub fn get_channel(env: &Env, id: &BytesN<32>) -> Result<Channel, Error> {
     let channels: Map<BytesN<32>, Channel> = env
         .storage()
+        .instance()
         .get(&CHANNELS)
-        .unwrap_or(Ok(Map::new(&env)))
-        .unwrap();
+        .unwrap_or(Map::new(&env));
     if !channels.contains_key(id.clone()) {
         return Err(Error::ChannelNotFound);
     }
-    match channels.get(id.clone()).unwrap() {
-        Ok(channel) => return Ok(channel),
-        Err(_) => return Err(Error::EncodingError),
+    match channels.get(id.clone()) {
+        Some(channel) => return Ok(channel),
+        None => return Err(Error::EncodingError),
     }
 }
 
@@ -548,22 +552,22 @@ pub fn get_channel(env: &Env, id: &BytesN<32>) -> Result<Channel, Error> {
 pub fn set_channel(env: &Env, channel: &Channel) {
     let mut channels: Map<BytesN<32>, Channel> = env
         .storage()
+        .instance()
         .get(&CHANNELS)
-        .unwrap_or(Ok(Map::new(&env)))
-        .unwrap();
+        .unwrap_or(Map::new(&env));
     channels.set(channel.state.channel_id.clone(), channel.clone());
-    env.storage().set(&CHANNELS, &channels);
+    env.storage().instance().set(&CHANNELS, &channels);
 }
 
 /// delete_channel deletes the channel with the given id from the environment's channel map.
 pub fn delete_channel(env: &Env, channel_id: &BytesN<32>) {
     let mut channels: Map<BytesN<32>, Channel> = env
         .storage()
+        .instance()
         .get(&CHANNELS)
-        .unwrap_or(Ok(Map::new(&env)))
-        .unwrap();
+        .unwrap_or(Map::new(&env));
     channels.remove(channel_id.clone());
-    env.storage().set(&CHANNELS, &channels);
+    env.storage().instance().set(&CHANNELS, &channels);
 }
 
 pub fn get_channel_id(env: &Env, params: &Params) -> BytesN<32> {
