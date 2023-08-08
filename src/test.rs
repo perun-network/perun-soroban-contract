@@ -247,16 +247,6 @@ fn setup(challenge_duration: u64, bal_a: i128, bal_b: i128, mock_auth: bool) -> 
     }
 }
 
-fn verify_state(t: &Test, state: &State) {
-    assert_eq!(&t.client.get_channel(&state.channel_id).state, state);
-}
-
-fn sign_state(t: &Test, state: &State) -> (BytesN<64>, BytesN<64>) {
-    let sig_a = sign(&t.env, &t.key_alice, &state);
-    let sig_b = sign(&t.env, &t.key_bob, &state);
-    (sig_a, sig_b)
-}
-
 struct Test<'a> {
     env: Env,
     ledger_info: LedgerInfo,
@@ -274,7 +264,9 @@ struct Test<'a> {
 
 impl Test<'_> {
     fn verify_state(&self, state: &State) {
-        assert_eq!(&self.client.get_channel(&state.channel_id).state, state);
+        let c = self.client.get_channel(&state.channel_id);
+        assert!(c.is_some());
+        assert_eq!(&self.client.get_channel(&state.channel_id).unwrap().state, state);
     }
 
     fn update(&mut self, new_state: State) {
