@@ -19,8 +19,9 @@ use crate::{A, B};
 use ed25519_dalek::Keypair;
 use ed25519_dalek::Signer;
 use rand::thread_rng;
-use soroban_sdk::xdr::ToXdr;
-use soroban_sdk::{token, IntoVal};
+use soroban_sdk::token::AdminClient;
+use soroban_sdk::xdr::{ToXdr, FromXdr};
+use soroban_sdk::{token, IntoVal, Bytes};
 
 use super::{Adjudicator, AdjudicatorClient, Balances, Params, Participant, State};
 use soroban_sdk::{
@@ -184,6 +185,9 @@ fn setup(challenge_duration: u64, bal_a: i128, bal_b: i128, mock_auth: bool) -> 
         sequence_number: 10,
         network_id: Default::default(),
         base_reserve: 10,
+        min_temp_entry_expiration: 16,
+        min_persistent_entry_expiration: 4096,
+        max_entry_expiration: 6312000,
     };
 
     e.ledger().set(ledgerinf.clone());
@@ -201,9 +205,14 @@ fn setup(challenge_duration: u64, bal_a: i128, bal_b: i128, mock_auth: bool) -> 
         addr: Address::random(&e),
         pubkey: public_key(&e, &key_bob),
     };
-    let token = TokenClient::new(&e, &e.register_stellar_asset_contract(Address::random(&e)));
-    token.mint(&alice.addr, &bal_a);
-    token.mint(&bob.addr, &bal_b);
+    let admin = Address::random(&e);
+    
+
+    let token_admin = AdminClient::new(&e, &e.register_stellar_asset_contract(admin.clone()));
+    TokenClient::new(&e, &token_admin.address);
+    let token = TokenClient::new(&e, &token_admin.address);
+    token_admin.mint(&alice.addr, &bal_a);
+    token_admin.mint(&bob.addr, &bal_b);
     let params = Params {
         a: alice.clone(),
         b: bob.clone(),
@@ -233,18 +242,9 @@ fn setup(challenge_duration: u64, bal_a: i128, bal_b: i128, mock_auth: bool) -> 
         channel_id,
         state,
         client,
+        token_admin,
         token,
     }
-}
-
-fn verify_state(t: &Test, state: &State) {
-    assert_eq!(&t.client.get_channel(&state.channel_id).state, state);
-}
-
-fn sign_state(t: &Test, state: &State) -> (BytesN<64>, BytesN<64>) {
-    let sig_a = sign(&t.env, &t.key_alice, &state);
-    let sig_b = sign(&t.env, &t.key_bob, &state);
-    (sig_a, sig_b)
 }
 
 struct Test<'a> {
@@ -258,12 +258,15 @@ struct Test<'a> {
     channel_id: BytesN<32>,
     state: State,
     client: AdjudicatorClient<'a>,
+    token_admin: AdminClient<'a>,
     token: TokenClient<'a>,
 }
 
 impl Test<'_> {
     fn verify_state(&self, state: &State) {
-        assert_eq!(&self.client.get_channel(&state.channel_id).state, state);
+        let c = self.client.get_channel(&state.channel_id);
+        assert!(c.is_some());
+        assert_eq!(&self.client.get_channel(&state.channel_id).unwrap().state, state);
     }
 
     fn update(&mut self, new_state: State) {
