@@ -19,9 +19,9 @@ use crate::{A, B};
 use ed25519_dalek::Keypair;
 use ed25519_dalek::Signer;
 use rand::thread_rng;
-use soroban_sdk::token::AdminClient;
-use soroban_sdk::xdr::{ToXdr, FromXdr};
-use soroban_sdk::{token, IntoVal, Bytes};
+use soroban_sdk::token::StellarAssetClient;
+use soroban_sdk::xdr::{FromXdr, ToXdr};
+use soroban_sdk::{token, Bytes, IntoVal};
 
 use super::{Adjudicator, AdjudicatorClient, Balances, Params, Participant, State};
 use soroban_sdk::{
@@ -206,9 +206,9 @@ fn setup(challenge_duration: u64, bal_a: i128, bal_b: i128, mock_auth: bool) -> 
         pubkey: public_key(&e, &key_bob),
     };
     let admin = Address::random(&e);
-    
 
-    let token_admin = AdminClient::new(&e, &e.register_stellar_asset_contract(admin.clone()));
+    let token_admin =
+        StellarAssetClient::new(&e, &e.register_stellar_asset_contract(admin.clone()));
     TokenClient::new(&e, &token_admin.address);
     let token = TokenClient::new(&e, &token_admin.address);
     token_admin.mint(&alice.addr, &bal_a);
@@ -258,7 +258,7 @@ struct Test<'a> {
     channel_id: BytesN<32>,
     state: State,
     client: AdjudicatorClient<'a>,
-    token_admin: AdminClient<'a>,
+    token_admin: StellarAssetClient<'a>,
     token: TokenClient<'a>,
 }
 
@@ -266,7 +266,10 @@ impl Test<'_> {
     fn verify_state(&self, state: &State) {
         let c = self.client.get_channel(&state.channel_id);
         assert!(c.is_some());
-        assert_eq!(&self.client.get_channel(&state.channel_id).unwrap().state, state);
+        assert_eq!(
+            &self.client.get_channel(&state.channel_id).unwrap().state,
+            state
+        );
     }
 
     fn update(&mut self, new_state: State) {

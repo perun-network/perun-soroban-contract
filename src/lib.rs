@@ -11,11 +11,10 @@
 // WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 // See the License for the specific language governing permissions and
 // limitations under the License.
-
 #![no_std]
 use soroban_sdk::{
-    contract,
-    contracterror, contractimpl, contracttype, token, xdr::ToXdr, Address, BytesN, Env, symbol_short,
+    contract, contracterror, contractimpl, contracttype, symbol_short, token, xdr::ToXdr, Address,
+    BytesN, Env,
 };
 
 #[contracterror]
@@ -154,7 +153,6 @@ const B: bool = !A;
 #[contract]
 pub struct Adjudicator;
 
-
 #[contractimpl]
 impl Adjudicator {
     /// open opens a channel in the contract instance with the given parameters
@@ -200,8 +198,10 @@ impl Adjudicator {
         // Write the new channel to storage.
         set_channel(&env, &channel);
         // Emit open event.
-        env.events()
-            .publish((symbol_short!("perun"), symbol_short!("open")), channel.clone());
+        env.events().publish(
+            (symbol_short!("perun"), symbol_short!("open")),
+            channel.clone(),
+        );
         if is_funded(&channel) {
             env.events()
                 .publish((symbol_short!("perun"), symbol_short!("fund_c")), channel);
@@ -243,7 +243,9 @@ impl Adjudicator {
         // effects
         // requiring auth here might not be strictly necessary, because this should
         // already be guarded by token.transfer, but again, it can not hurt.
+
         actor.require_auth();
+
         // Write the updated channel to storage.
         set_channel(&env, &channel);
         // Emit fund event.
@@ -252,14 +254,27 @@ impl Adjudicator {
             (channel.clone(), party_idx),
         );
         if is_funded(&channel) {
-            env.events()
-                .publish((symbol_short!("perun"), symbol_short!("fund_c")), channel.clone());
+            env.events().publish(
+                (symbol_short!("perun"), symbol_short!("fund_c")),
+                channel.clone(),
+            );
         }
 
         // interact
         let contract = env.current_contract_address();
         let token_client = token::Client::new(&env, &channel.state.balances.token);
+        //lock the party's balance to the contract.
+        //token_client.transfer(&actor, &contract, &amount);
         // lock the party's balance to the contract.
+        // AuthorizedInvocation {
+        //     function: AuthorizedFunction::Contract((
+        //         contract.clone(),
+        //         symbol_short!("approve"),
+        //         (&actor, &contract, amount, 1000_u32).into_val(&env),
+        //     )),
+        //     sub_invocations: std::vec![],
+        // };
+        // token_client.approve(&actor, &contract, &amount, &1000);
         token_client.transfer(&actor, &contract, &amount);
         Ok(())
     }
@@ -302,15 +317,19 @@ impl Adjudicator {
         channel.control.withdrawn_b = state.balances.bal_b == 0;
 
         // Emit closed event.
-        env.events()
-            .publish((symbol_short!("perun"), symbol_short!("closed")), channel.clone());
+        env.events().publish(
+            (symbol_short!("perun"), symbol_short!("closed")),
+            channel.clone(),
+        );
 
         if is_withdrawn(&channel) {
             // If the channel is withdrawn at this point (both balances 0)
             // we can already delete it from contract storage and
             // emit a withdraw_complete event.
-            env.events()
-                .publish((symbol_short!("perun"), symbol_short!("pay_c")), channel.clone());
+            env.events().publish(
+                (symbol_short!("perun"), symbol_short!("pay_c")),
+                channel.clone(),
+            );
             delete_channel(&env, &channel.state.channel_id)
         } else {
             // Write the updated channel to contract storage.
@@ -347,12 +366,16 @@ impl Adjudicator {
         channel.control.withdrawn_a = channel.state.balances.bal_a == 0;
         channel.control.withdrawn_b = channel.state.balances.bal_b == 0;
         // Emit force_closed event.
-        env.events()
-            .publish((symbol_short!("perun"), symbol_short!("f_closed")), channel.clone());
+        env.events().publish(
+            (symbol_short!("perun"), symbol_short!("f_closed")),
+            channel.clone(),
+        );
         if is_withdrawn(&channel) {
             // Emit withdraw_complete event and delete the channel.
-            env.events()
-                .publish((symbol_short!("perun"), symbol_short!("pay_c")), channel.clone());
+            env.events().publish(
+                (symbol_short!("perun"), symbol_short!("pay_c")),
+                channel.clone(),
+            );
             delete_channel(&env, &channel.state.channel_id)
         } else {
             set_channel(&env, &channel);
@@ -403,8 +426,10 @@ impl Adjudicator {
         set_channel(&env, &channel);
 
         // Emit a dispute event.
-        env.events()
-            .publish((symbol_short!("perun"), symbol_short!("dispute")), channel.clone());
+        env.events().publish(
+            (symbol_short!("perun"), symbol_short!("dispute")),
+            channel.clone(),
+        );
 
         Ok(())
     }
@@ -448,8 +473,10 @@ impl Adjudicator {
         // effects
         if is_withdrawn(&channel) {
             // If the channel is withdrawn completely, emit an according event and delete it.
-            env.events()
-                .publish((symbol_short!("perun"), symbol_short!("pay_c")), channel.clone());
+            env.events().publish(
+                (symbol_short!("perun"), symbol_short!("pay_c")),
+                channel.clone(),
+            );
             delete_channel(&env, &channel_id);
         } else {
             set_channel(&env, &channel);
@@ -531,12 +558,16 @@ pub fn get_channel(env: &Env, id: &BytesN<32>) -> Option<Channel> {
 /// set_channel writes the given channel to persistent storage.
 /// The key is the channel id in the channel's state.
 pub fn set_channel(env: &Env, channel: &Channel) {
-    env.storage().persistent().set(&ChannelID::ID(channel.state.channel_id.clone()), channel);
+    env.storage()
+        .persistent()
+        .set(&ChannelID::ID(channel.state.channel_id.clone()), channel);
 }
 
 /// delete_channel deletes the channel with the given id from persistent storage.
 pub fn delete_channel(env: &Env, channel_id: &BytesN<32>) {
-    env.storage().persistent().remove(&ChannelID::ID(channel_id.clone()));
+    env.storage()
+        .persistent()
+        .remove(&ChannelID::ID(channel_id.clone()));
 }
 
 /// get_channel_id returns the channel id for the given channel parameters.
