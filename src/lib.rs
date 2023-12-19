@@ -260,21 +260,8 @@ impl Adjudicator {
             );
         }
 
-        // interact
         let contract = env.current_contract_address();
         let token_client = token::Client::new(&env, &channel.state.balances.token);
-        //lock the party's balance to the contract.
-        //token_client.transfer(&actor, &contract, &amount);
-        // lock the party's balance to the contract.
-        // AuthorizedInvocation {
-        //     function: AuthorizedFunction::Contract((
-        //         contract.clone(),
-        //         symbol_short!("approve"),
-        //         (&actor, &contract, amount, 1000_u32).into_val(&env),
-        //     )),
-        //     sub_invocations: std::vec![],
-        // };
-        // token_client.approve(&actor, &contract, &amount, &1000);
         token_client.transfer(&actor, &contract, &amount);
         Ok(())
     }
