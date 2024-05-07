@@ -216,9 +216,9 @@ fn setup(challenge_duration: u64, bal_a: i128, bal_b: i128, mock_auth: bool) -> 
         sequence_number: 10,
         network_id: Default::default(),
         base_reserve: 10,
-        min_temp_entry_expiration: 16,
-        min_persistent_entry_expiration: 4096,
-        max_entry_expiration: 6312000,
+        min_temp_entry_ttl: 16,
+        min_persistent_entry_ttl: 4096,
+        max_entry_ttl: 6312000,
     };
 
     e.ledger().set(ledgerinf.clone());
@@ -229,14 +229,14 @@ fn setup(challenge_duration: u64, bal_a: i128, bal_b: i128, mock_auth: bool) -> 
     let key_alice = generate_keypair();
     let key_bob = generate_keypair();
     let alice = Participant {
-        addr: Address::random(&e),
+        addr: Address::generate(&e),
         pubkey: public_key(&e, &key_alice),
     };
     let bob = Participant {
-        addr: Address::random(&e),
+        addr: Address::generate(&e),
         pubkey: public_key(&e, &key_bob),
     };
-    let admin = Address::random(&e);
+    let admin = Address::generate(&e);
 
     let token_admin =
         StellarAssetClient::new(&e, &e.register_stellar_asset_contract(admin.clone()));
@@ -264,7 +264,6 @@ fn setup(challenge_duration: u64, bal_a: i128, bal_b: i128, mock_auth: bool) -> 
     let client = AdjudicatorClient::new(&e, &e.register_contract(None, Adjudicator {}));
     Test {
         env: e,
-        ledger_info: ledgerinf,
         alice,
         bob,
         key_alice,
@@ -273,14 +272,12 @@ fn setup(challenge_duration: u64, bal_a: i128, bal_b: i128, mock_auth: bool) -> 
         channel_id,
         state,
         client,
-        token_admin,
         token,
     }
 }
 
 struct Test<'a> {
     env: Env,
-    ledger_info: LedgerInfo,
     alice: Participant,
     bob: Participant,
     key_alice: Keypair,
@@ -289,7 +286,6 @@ struct Test<'a> {
     channel_id: BytesN<32>,
     state: State,
     client: AdjudicatorClient<'a>,
-    token_admin: StellarAssetClient<'a>,
     token: TokenClient<'a>,
 }
 
