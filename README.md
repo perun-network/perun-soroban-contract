@@ -1,6 +1,6 @@
-<h1 align="center"><br>
-    <a href="https://perun.network/"><img src=".assets/go-perun.png" alt="Perun" width="196"></a>
-<br></h1>
+<h1 align="center">
+    <a href="https://perun.network/"><img src=".assets/go-perun.png" alt="Perun" width="30%"></a>
+</h1>
 
 <h2 align="center">Perun Soroban Contract </h2>
 
