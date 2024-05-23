@@ -17,6 +17,8 @@ use soroban_sdk::{
     BytesN, Env,
 };
 
+mod multi;
+
 #[contracterror]
 #[derive(Copy, Clone, Debug, Eq, PartialEq, PartialOrd, Ord)]
 #[repr(u32)]
@@ -42,6 +44,7 @@ pub enum Error {
     AbortFundingOnClosedChannel = 19,
     AbortFundingOnDisputedChannel = 20,
     AbortFundingWithoutFunds = 21,
+    VerificationFailed = 22,
 }
 
 #[contracttype]
@@ -50,7 +53,7 @@ pub enum Error {
 pub struct Balances {
     /// token represents a channel's asset / currency. Currently this contract
     /// supports single-asset channels, but multi-asset support is possible.
-    token: Address,
+    token: multi::ChannelAsset,
     pub bal_a: i128,
     pub bal_b: i128,
 }
@@ -62,15 +65,13 @@ pub enum ChannelID {
 
 #[contracttype]
 #[derive(Clone, Debug, Eq, PartialEq)]
-/// Participant represents a participant in the channel.
-/// All channels have two participants.
 pub struct Participant {
     /// addr represents the participant's on-chain address.
     /// The participant receives payments on this address.
-    pub addr: Address,
+    pub addr: multi::ChannelAddress, // Address,
     /// pubkey is the participant's public key. The participant's signatures on channel
     /// states must be valid under this public key.
-    pub pubkey: BytesN<32>,
+    pub pubkey: multi::ChannelPubKey, // BytesN<32>,
 }
 
 #[contracttype]
@@ -243,7 +244,6 @@ impl Adjudicator {
         // effects
         // requiring auth here might not be strictly necessary, because this should
         // already be guarded by token.transfer, but again, it can not hurt.
-
         actor.require_auth();
 
         // Write the updated channel to storage.
@@ -261,8 +261,20 @@ impl Adjudicator {
         }
 
         let contract = env.current_contract_address();
-        let token_client = token::Client::new(&env, &channel.state.balances.token);
-        token_client.transfer(&actor, &contract, &amount);
+        // let token_client = token::Client::new(&env, &channel.state.balances.token);
+        // token_client.transfer(&actor, &contract, &amount);
+        match &channel.state.balances.token {
+            multi::ChannelAsset::Single(address) => {
+                let token_client = token::Client::new(&env, &address.clone());
+                token_client.transfer(&actor.get_address(), &contract, &amount);
+            }
+            multi::ChannelAsset::Multi(address, _multi_address) => {
+                let token_client = token::Client::new(&env, &address.clone());
+                token_client.transfer(&actor.get_address(), &contract, &amount);
+                // panic!("Attempted to use a non-single token type for transfer.");
+            }
+        }
+
         Ok(())
     }
 
@@ -270,8 +282,10 @@ impl Adjudicator {
     pub fn close(
         env: Env,
         state: State,
-        sig_a: BytesN<64>,
-        sig_b: BytesN<64>,
+        sig_a_stellar: BytesN<64>,
+        sig_b_stellar: BytesN<64>,
+        sig_a_eth: BytesN<65>,
+        sig_b_eth: BytesN<65>,
     ) -> Result<(), Error> {
         // checks
         // Only final states can be closed gracefully.
@@ -288,10 +302,24 @@ impl Adjudicator {
 
         // We verify both parties' signatures on the submitted final state.
         let message = state.clone().to_xdr(&env);
-        env.crypto()
-            .ed25519_verify(&channel.params.a.pubkey, &message, &sig_a);
-        env.crypto()
-            .ed25519_verify(&channel.params.b.pubkey, &message, &sig_b);
+
+        // here we need to differentiate between ed25519 and secp256k1
+
+        // env.crypto()
+        //     .ed25519_verify(&channel.params.a.pubkey, &message, &sig_a);
+        // env.crypto()
+        //     .ed25519_verify(&channel.params.b.pubkey, &message, &sig_b);
+
+        channel
+            .params
+            .a
+            .pubkey
+            .verify_signature(&env, &message, &sig_a_stellar, &sig_a_eth);
+        channel
+            .params
+            .b
+            .pubkey
+            .verify_signature(&env, &message, &sig_b_stellar, &sig_b_eth);
 
         // effects
         // Mark the channel as closed (to allow withdrawing).
@@ -376,8 +404,10 @@ impl Adjudicator {
     pub fn dispute(
         env: Env,
         new_state: State,
-        sig_a: BytesN<64>,
-        sig_b: BytesN<64>,
+        sig_a_stellar: BytesN<64>,
+        sig_b_stellar: BytesN<64>,
+        sig_a_eth: BytesN<65>,
+        sig_b_eth: BytesN<65>,
     ) -> Result<(), Error> {
         // checks
         let mut channel = get_channel(&env, &new_state.channel_id).ok_or(Error::ChannelNotFound)?;
@@ -396,10 +426,20 @@ impl Adjudicator {
 
         // We verify that the new state is signed by both parties.
         let message = new_state.clone().to_xdr(&env);
-        env.crypto()
-            .ed25519_verify(&channel.params.a.pubkey, &message, &sig_a);
-        env.crypto()
-            .ed25519_verify(&channel.params.b.pubkey, &message, &sig_b);
+        // env.crypto()
+        //     .ed25519_verify(&channel.params.a.pubkey, &message, &sig_a);
+        // env.crypto()
+        //     .ed25519_verify(&channel.params.b.pubkey, &message, &sig_b);
+        channel
+            .params
+            .a
+            .pubkey
+            .verify_signature(&env, &message, &sig_a_stellar, &sig_a_eth);
+        channel
+            .params
+            .b
+            .pubkey
+            .verify_signature(&env, &message, &sig_b_stellar, &sig_b_eth);
 
         // effects
         // We set disputed to true and update the timestamp.
@@ -471,9 +511,30 @@ impl Adjudicator {
 
         // interact
         let contract = env.current_contract_address();
-        let token_client = token::Client::new(&env, &channel.state.balances.token);
+        match &channel.state.balances.token {
+            multi::ChannelAsset::Single(address) => {
+                let token_client = token::Client::new(&env, &address);
+                token_client.transfer(&contract, &actor.get_address(), &amount);
+            }
+            multi::ChannelAsset::Multi(address, _multi_address) => {
+                let token_client = token::Client::new(&env, &address);
+                token_client.transfer(&contract, &actor.get_address(), &amount);
+            }
+        };
+
+        // match &channel.state.balances.token {
+        //     multi::ChannelAsset::Single(address) => {
+        //         let token_client = token::Client::new(&env, &address.clone());
+        //         token_client.transfer(&actor.get_address(), &contract, &amount);
+        //     }
+        //     multi::ChannelAsset::Multi(address, _multi_address) => {
+        //         let token_client = token::Client::new(&env, &address.clone());
+        //         token_client.transfer(&actor.get_address(), &contract, &amount);
+        //         // panic!("Attempted to use a non-single token type for transfer.");
+        //     }
+        // }
+
         // transfer the correct amount to the withdrawing party.
-        token_client.transfer(&contract, &actor, &amount);
 
         Ok(())
     }
@@ -523,9 +584,20 @@ impl Adjudicator {
 
         // interact
         let contract = env.current_contract_address();
-        let token_client = token::Client::new(&env, &channel.state.balances.token);
+
+        match &channel.state.balances.token {
+            multi::ChannelAsset::Single(address) => {
+                let token_client = token::Client::new(&env, &address);
+                token_client.transfer(&contract, &actor.get_address(), &amount);
+            }
+            multi::ChannelAsset::Multi(address, _multi_address) => {
+                let token_client = token::Client::new(&env, &address);
+                token_client.transfer(&contract, &actor.get_address(), &amount);
+            }
+        };
+
+        // let token_client = token::Client::new(&env, &channel.state.balances.token);
         // The reclaimed funding is returned to the party.
-        token_client.transfer(&contract, &actor, &amount);
 
         Ok(())
     }
