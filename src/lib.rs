@@ -1,4 +1,4 @@
-// Copyright 2023 - See NOTICE file for copyright holders.
+// Copyright 2024 - See NOTICE file for copyright holders.
 //
 // Licensed under the Apache License, Version 2.0 (the "License");
 // you may not use this file except in compliance with the License.
@@ -13,8 +13,8 @@
 // limitations under the License.
 #![no_std]
 use soroban_sdk::{
-    contract, contracterror, contractimpl, contracttype, symbol_short, token, xdr::ToXdr, Address,
-    BytesN, Env,
+    contract, contracterror, contractimpl, contracttype, symbol_short, token, vec, xdr::ToXdr,
+    Address, BytesN, Env, Vec,
 };
 
 #[contracterror]
@@ -48,11 +48,21 @@ pub enum Error {
 #[derive(Clone, Debug, Eq, PartialEq)]
 /// Balances represent a channel state's balance distribution
 pub struct Balances {
-    /// token represents a channel's asset / currency. Currently this contract
-    /// supports single-asset channels, but multi-asset support is possible.
-    token: Address,
-    pub bal_a: i128,
-    pub bal_b: i128,
+    /// token represents a channel's asset / currency. This contract
+    /// supports multi-asset channels.
+    token: Vec<Address>,
+    pub bal_a: Vec<i128>,
+    pub bal_b: Vec<i128>,
+}
+
+impl Balances {
+    pub fn new(env: &Env) -> Self {
+        Balances {
+            token: vec![env],
+            bal_a: vec![env],
+            bal_b: vec![env],
+        }
+    }
 }
 
 #[contracttype]
@@ -182,8 +192,9 @@ impl Adjudicator {
         // Assemble the initial channel control struct.
         let control = Control {
             // We directly consider a channel to be funded by a party, if their balance is 0
-            funded_a: state.balances.bal_a == 0,
-            funded_b: state.balances.bal_b == 0,
+            funded_a: state.balances.bal_a.iter().all(|x| x == 0),
+            funded_b: state.balances.bal_b.iter().all(|x| x == 0),
+
             // channels are not closed, withdrawn from or disputed initially.
             closed: false,
             withdrawn_a: false,
@@ -228,7 +239,10 @@ impl Adjudicator {
                 // Note that the transaction is rolled back, if funding fails at a later point,
                 // so doing this now is not a problem.
                 channel.control.funded_a = true; // effect
-                (channel.params.a.addr.clone(), channel.state.balances.bal_a)
+                (
+                    channel.params.a.addr.clone(),
+                    channel.state.balances.bal_a.clone(),
+                )
             }
             B => {
                 // Fund for party B.
@@ -236,7 +250,10 @@ impl Adjudicator {
                     return Err(Error::AlreadyFunded);
                 }
                 channel.control.funded_b = true; // effect
-                (channel.params.b.addr.clone(), channel.state.balances.bal_b)
+                (
+                    channel.params.b.addr.clone(),
+                    channel.state.balances.bal_b.clone(),
+                )
             }
         };
 
@@ -261,8 +278,13 @@ impl Adjudicator {
         }
 
         let contract = env.current_contract_address();
-        let token_client = token::Client::new(&env, &channel.state.balances.token);
-        token_client.transfer(&actor, &contract, &amount);
+        let tokens = &channel.state.balances.token;
+
+        for i in 0..tokens.len() {
+            let token_client = token::Client::new(&env, &tokens.get(i).unwrap());
+            token_client.transfer(&actor, &contract, &amount.get(i).unwrap());
+        }
+
         Ok(())
     }
 
@@ -300,8 +322,8 @@ impl Adjudicator {
         channel.state = state.clone();
         // Set the parties' withdrawn bit to true, if their balance is 0
         // in the final state.
-        channel.control.withdrawn_a = state.balances.bal_a == 0;
-        channel.control.withdrawn_b = state.balances.bal_b == 0;
+        channel.control.withdrawn_a = state.balances.bal_a.iter().all(|x| x == 0);
+        channel.control.withdrawn_b = state.balances.bal_b.iter().all(|x| x == 0);
 
         // Emit closed event.
         env.events().publish(
@@ -350,8 +372,9 @@ impl Adjudicator {
         // effects
         // The channel is now closed, balances can be withdrawn.
         channel.control.closed = true;
-        channel.control.withdrawn_a = channel.state.balances.bal_a == 0;
-        channel.control.withdrawn_b = channel.state.balances.bal_b == 0;
+        channel.control.withdrawn_a = channel.state.balances.bal_a.iter().all(|x| x == 0);
+        channel.control.withdrawn_b = channel.state.balances.bal_b.iter().all(|x| x == 0);
+
         // Emit force_closed event.
         env.events().publish(
             (symbol_short!("perun"), symbol_short!("f_closed")),
@@ -439,14 +462,20 @@ impl Adjudicator {
                 }
                 // We mark that A has now withdrawn.
                 channel.control.withdrawn_a = true; // effect
-                (channel.params.a.addr.clone(), channel.state.balances.bal_a)
+                (
+                    channel.params.a.addr.clone(),
+                    channel.state.balances.bal_a.clone(),
+                )
             }
             B => {
                 if channel.control.withdrawn_b {
                     return Err(Error::AlreadyFunded);
                 }
                 channel.control.withdrawn_b = true; // effect
-                (channel.params.b.addr.clone(), channel.state.balances.bal_b)
+                (
+                    channel.params.b.addr.clone(),
+                    channel.state.balances.bal_b.clone(),
+                )
             }
         };
         actor.require_auth();
@@ -471,10 +500,13 @@ impl Adjudicator {
 
         // interact
         let contract = env.current_contract_address();
-        let token_client = token::Client::new(&env, &channel.state.balances.token);
-        // transfer the correct amount to the withdrawing party.
-        token_client.transfer(&contract, &actor, &amount);
+        let tokens = &channel.state.balances.token;
 
+        for i in 0..tokens.len() {
+            let token_client = token::Client::new(&env, &tokens.get(i).unwrap());
+            // transfer the correct amount to the withdrawing party.
+            token_client.transfer(&contract, &actor, &amount.get(i).unwrap());
+        }
         Ok(())
     }
 
@@ -523,9 +555,13 @@ impl Adjudicator {
 
         // interact
         let contract = env.current_contract_address();
-        let token_client = token::Client::new(&env, &channel.state.balances.token);
-        // The reclaimed funding is returned to the party.
-        token_client.transfer(&contract, &actor, &amount);
+        let tokens = &channel.state.balances.token;
+
+        for i in 0..tokens.len() {
+            let token_client = token::Client::new(&env, &tokens.get(i).unwrap());
+            // The reclaimed funding is returned to the party.
+            token_client.transfer(&contract, &actor, &amount.get(i).unwrap());
+        }
 
         Ok(())
     }
@@ -597,10 +633,15 @@ pub fn is_valid_state_transition(old: &State, new: &State) -> bool {
     if old.balances.token != new.balances.token {
         return false;
     }
-    // b) The sum of the balances must be equal.
-    if old.balances.bal_a + old.balances.bal_b != new.balances.bal_a + new.balances.bal_b {
-        return false;
+    // // b) The sum of the balances must be equal.
+    for i in 0..old.balances.bal_a.len() {
+        if (old.balances.bal_a.get(i).unwrap() + old.balances.bal_b.get(i).unwrap())
+            != (new.balances.bal_a.get(i).unwrap() + new.balances.bal_b.get(i).unwrap())
+        {
+            return false;
+        }
     }
+
     return true;
 }
 
