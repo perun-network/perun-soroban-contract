@@ -636,7 +636,7 @@ pub fn is_valid_state_transition(old: &State, new: &State) -> bool {
     // // b) The sum of the balances must be equal.
     for i in 0..old.balances.bal_a.len() {
         if (old.balances.bal_a.get(i).unwrap() + old.balances.bal_b.get(i).unwrap())
-            != (new.balances.bal_a.get(i).unwrap() + new.balances.bal_b.get(i).unwrap())
+            != new.balances.bal_a.get(i).unwrap() + new.balances.bal_b.get(i).unwrap()
         {
             return false;
         }
