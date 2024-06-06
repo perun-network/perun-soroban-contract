@@ -50,7 +50,7 @@ pub enum Error {
 pub struct Balances {
     /// token represents a channel's asset / currency. This contract
     /// supports multi-asset channels.
-    token: Vec<Address>,
+    tokens: Vec<Address>,
     pub bal_a: Vec<i128>,
     pub bal_b: Vec<i128>,
 }
@@ -58,7 +58,7 @@ pub struct Balances {
 impl Balances {
     pub fn new(env: &Env) -> Self {
         Balances {
-            token: vec![env],
+            tokens: vec![env],
             bal_a: vec![env],
             bal_b: vec![env],
         }
@@ -278,7 +278,7 @@ impl Adjudicator {
         }
 
         let contract = env.current_contract_address();
-        let tokens = &channel.state.balances.token;
+        let tokens = &channel.state.balances.tokens;
 
         for i in 0..tokens.len() {
             let token_client = token::Client::new(&env, &tokens.get(i).unwrap());
@@ -500,7 +500,7 @@ impl Adjudicator {
 
         // interact
         let contract = env.current_contract_address();
-        let tokens = &channel.state.balances.token;
+        let tokens = &channel.state.balances.tokens;
 
         for i in 0..tokens.len() {
             let token_client = token::Client::new(&env, &tokens.get(i).unwrap());
@@ -555,7 +555,7 @@ impl Adjudicator {
 
         // interact
         let contract = env.current_contract_address();
-        let tokens = &channel.state.balances.token;
+        let tokens = &channel.state.balances.tokens;
 
         for i in 0..tokens.len() {
             let token_client = token::Client::new(&env, &tokens.get(i).unwrap());
@@ -630,7 +630,7 @@ pub fn is_valid_state_transition(old: &State, new: &State) -> bool {
     }
     // Both states must have "coherent balances". That means they must:
     // a) share the same token as asset / currency
-    if old.balances.token != new.balances.token {
+    if old.balances.tokens != new.balances.tokens {
         return false;
     }
     // // b) The sum of the balances must be equal.

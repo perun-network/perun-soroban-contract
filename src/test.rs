@@ -361,7 +361,7 @@ fn setup(
     let state = State {
         channel_id: channel_id.clone(),
         balances: Balances {
-            token: token_addresses.clone(),
+            tokens: token_addresses.clone(),
             bal_a: bal_a,
             bal_b: bal_b,
         },
@@ -441,7 +441,7 @@ impl Test<'_> {
         self.update(State {
             channel_id: self.state.channel_id.clone(),
             balances: Balances {
-                token: self.state.balances.token.clone(),
+                tokens: self.state.balances.tokens.clone(),
                 bal_a: new_bal_a,
                 bal_b: new_bal_b,
             },
@@ -474,7 +474,7 @@ impl Test<'_> {
         self.update(State {
             channel_id: self.state.channel_id.clone(),
             balances: Balances {
-                token: self.state.balances.token.clone(),
+                tokens: self.state.balances.tokens.clone(),
                 bal_a: new_bal_a,
                 bal_b: new_bal_b,
             },
