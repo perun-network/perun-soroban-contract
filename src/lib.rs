@@ -192,8 +192,8 @@ impl Adjudicator {
         // Assemble the initial channel control struct.
         let control = Control {
             // We directly consider a channel to be funded by a party, if their balance is 0
-            funded_a: state.balances.bal_a.iter().all(|x| x == 0),
-            funded_b: state.balances.bal_b.iter().all(|x| x == 0),
+            funded_a: false,
+            funded_b: false,
 
             // channels are not closed, withdrawn from or disputed initially.
             closed: false,
@@ -282,7 +282,11 @@ impl Adjudicator {
 
         for i in 0..tokens.len() {
             let token_client = token::Client::new(&env, &tokens.get(i).unwrap());
-            token_client.transfer(&actor, &contract, &amount.get(i).unwrap());
+            if let Some(amt) = amount.get(i) {
+                if amt > 0 {
+                    token_client.transfer(&actor, &contract, &amount.get(i).unwrap());
+                }
+            }
         }
 
         Ok(())
@@ -322,8 +326,6 @@ impl Adjudicator {
         channel.state = state.clone();
         // Set the parties' withdrawn bit to true, if their balance is 0
         // in the final state.
-        channel.control.withdrawn_a = state.balances.bal_a.iter().all(|x| x == 0);
-        channel.control.withdrawn_b = state.balances.bal_b.iter().all(|x| x == 0);
 
         // Emit closed event.
         env.events().publish(
@@ -372,8 +374,6 @@ impl Adjudicator {
         // effects
         // The channel is now closed, balances can be withdrawn.
         channel.control.closed = true;
-        channel.control.withdrawn_a = channel.state.balances.bal_a.iter().all(|x| x == 0);
-        channel.control.withdrawn_b = channel.state.balances.bal_b.iter().all(|x| x == 0);
 
         // Emit force_closed event.
         env.events().publish(
@@ -504,8 +504,13 @@ impl Adjudicator {
 
         for i in 0..tokens.len() {
             let token_client = token::Client::new(&env, &tokens.get(i).unwrap());
-            // transfer the correct amount to the withdrawing party.
-            token_client.transfer(&contract, &actor, &amount.get(i).unwrap());
+            // Check if the amount is greater than zero before transferring.
+            if let Some(amt) = amount.get(i) {
+                if amt > 0 {
+                    // Transfer the correct amount to the withdrawing party.
+                    token_client.transfer(&contract, &actor, &amt);
+                }
+            }
         }
         Ok(())
     }
