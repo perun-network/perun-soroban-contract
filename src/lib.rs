@@ -564,8 +564,11 @@ impl Adjudicator {
 
         for i in 0..tokens.len() {
             let token_client = token::Client::new(&env, &tokens.get(i).unwrap());
-            // The reclaimed funding is returned to the party.
-            token_client.transfer(&contract, &actor, &amount.get(i).unwrap());
+            if let Some(amt) = amount.get(i) {
+                if amt > 0 {
+                    token_client.transfer(&contract, &actor, &amt);
+                }
+            }
         }
 
         Ok(())
