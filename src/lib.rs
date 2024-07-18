@@ -1,4 +1,4 @@
-// Copyright 2023 - See NOTICE file for copyright holders.
+// Copyright 2024 - See NOTICE file for copyright holders.
 //
 // Licensed under the Apache License, Version 2.0 (the "License");
 // you may not use this file except in compliance with the License.
@@ -14,9 +14,10 @@
 #![no_std]
 use soroban_sdk::{
     contract, contracterror, contractimpl, contracttype, symbol_short, token, xdr::ToXdr, Address,
-    BytesN, Env,
+    BytesN, Env, Vec,
 };
 
+mod ethsig;
 mod multi;
 
 #[contracterror]
@@ -45,6 +46,8 @@ pub enum Error {
     AbortFundingOnDisputedChannel = 20,
     AbortFundingWithoutFunds = 21,
     VerificationFailed = 22,
+    InvalidPubKeyType = 23,
+    InvalidKeyType = 24,
 }
 
 #[contracttype]
@@ -53,9 +56,9 @@ pub enum Error {
 pub struct Balances {
     /// token represents a channel's asset / currency. Currently this contract
     /// supports single-asset channels, but multi-asset support is possible.
-    token: multi::ChannelAsset,
-    pub bal_a: i128,
-    pub bal_b: i128,
+    tokens: multi::ChannelAsset,
+    pub bal_a: Vec<i128>,
+    pub bal_b: Vec<i128>,
 }
 
 #[contracttype]
@@ -68,7 +71,7 @@ pub enum ChannelID {
 pub struct Participant {
     /// addr represents the participant's on-chain address.
     /// The participant receives payments on this address.
-    pub addr: multi::ChannelAddress, // Address,
+    pub addr: Address, //multi::ChannelAddress, // Address,
     /// pubkey is the participant's public key. The participant's signatures on channel
     /// states must be valid under this public key.
     pub pubkey: multi::ChannelPubKey, // BytesN<32>,
@@ -183,8 +186,9 @@ impl Adjudicator {
         // Assemble the initial channel control struct.
         let control = Control {
             // We directly consider a channel to be funded by a party, if their balance is 0
-            funded_a: state.balances.bal_a == 0,
-            funded_b: state.balances.bal_b == 0,
+            funded_a: false,
+            funded_b: false,
+
             // channels are not closed, withdrawn from or disputed initially.
             closed: false,
             withdrawn_a: false,
@@ -229,7 +233,10 @@ impl Adjudicator {
                 // Note that the transaction is rolled back, if funding fails at a later point,
                 // so doing this now is not a problem.
                 channel.control.funded_a = true; // effect
-                (channel.params.a.addr.clone(), channel.state.balances.bal_a)
+                (
+                    channel.params.a.addr.clone(),
+                    channel.state.balances.bal_a.clone(),
+                )
             }
             B => {
                 // Fund for party B.
@@ -237,7 +244,10 @@ impl Adjudicator {
                     return Err(Error::AlreadyFunded);
                 }
                 channel.control.funded_b = true; // effect
-                (channel.params.b.addr.clone(), channel.state.balances.bal_b)
+                (
+                    channel.params.b.addr.clone(),
+                    channel.state.balances.bal_b.clone(),
+                )
             }
         };
 
@@ -261,17 +271,38 @@ impl Adjudicator {
         }
 
         let contract = env.current_contract_address();
-        // let token_client = token::Client::new(&env, &channel.state.balances.token);
-        // token_client.transfer(&actor, &contract, &amount);
-        match &channel.state.balances.token {
+        let tokens = &channel.state.balances.tokens;
+
+        match &tokens {
             multi::ChannelAsset::Single(address) => {
-                let token_client = token::Client::new(&env, &address.clone());
-                token_client.transfer(&actor.get_address(), &contract, &amount);
+                let token_client = token::Client::new(&env, address);
+                if let Some(amt) = amount.get(0) {
+                    if amt > 0 {
+                        token_client.transfer(&actor, &contract, &amt);
+                    }
+                }
             }
-            multi::ChannelAsset::Multi(address, _multi_address) => {
-                let token_client = token::Client::new(&env, &address.clone());
-                token_client.transfer(&actor.get_address(), &contract, &amount);
-                // panic!("Attempted to use a non-single token type for transfer.");
+            multi::ChannelAsset::Multi(addresses) => {
+                for (i, address) in addresses.iter().enumerate() {
+                    let token_client = token::Client::new(&env, &address);
+                    if let Some(amt) = amount.get(i.try_into().unwrap()) {
+                        if amt > 0 {
+                            token_client.transfer(&actor, &contract, &amt);
+                        }
+                    }
+                }
+            }
+            multi::ChannelAsset::Cross(cross_assets) => {
+                for (i, cross_asset) in cross_assets.iter().enumerate() {
+                    if let multi::AddressType::Stellar(address) = &cross_asset.address {
+                        let token_client = token::Client::new(&env, address);
+                        if let Some(amt) = amount.get(i.try_into().unwrap()) {
+                            if amt > 0 {
+                                token_client.transfer(&actor, &contract, &amt);
+                            }
+                        }
+                    }
+                }
             }
         }
 
@@ -284,8 +315,9 @@ impl Adjudicator {
         state: State,
         sig_a_stellar: BytesN<64>,
         sig_b_stellar: BytesN<64>,
-        sig_a_eth: BytesN<65>,
-        sig_b_eth: BytesN<65>,
+        sig_a_eth: BytesN<64>,
+        sig_b_eth: BytesN<64>,
+        cross_chain: bool,
     ) -> Result<(), Error> {
         // checks
         // Only final states can be closed gracefully.
@@ -303,33 +335,39 @@ impl Adjudicator {
         // We verify both parties' signatures on the submitted final state.
         let message = state.clone().to_xdr(&env);
 
-        // here we need to differentiate between ed25519 and secp256k1
-
-        // env.crypto()
-        //     .ed25519_verify(&channel.params.a.pubkey, &message, &sig_a);
-        // env.crypto()
-        //     .ed25519_verify(&channel.params.b.pubkey, &message, &sig_b);
-
-        channel
-            .params
-            .a
-            .pubkey
-            .verify_signature(&env, &message, &sig_a_stellar, &sig_a_eth);
-        channel
-            .params
-            .b
-            .pubkey
-            .verify_signature(&env, &message, &sig_b_stellar, &sig_b_eth);
+        if cross_chain {
+            channel
+                .params
+                .a
+                .pubkey
+                .verify_signature(&env, &message, &sig_a_stellar, &sig_a_eth)?;
+            channel
+                .params
+                .b
+                .pubkey
+                .verify_signature(&env, &message, &sig_b_stellar, &sig_b_eth)?;
+        } else {
+            match &channel.params.a.pubkey {
+                multi::ChannelPubKey::Single(pubkey) => {
+                    env.crypto()
+                        .ed25519_verify(pubkey, &message, &sig_a_stellar);
+                }
+                multi::ChannelPubKey::Cross(_, _) => return Err(Error::InvalidPubKeyType),
+            }
+            match &channel.params.b.pubkey {
+                multi::ChannelPubKey::Single(pubkey) => {
+                    env.crypto()
+                        .ed25519_verify(pubkey, &message, &sig_b_stellar);
+                }
+                multi::ChannelPubKey::Cross(_, _) => return Err(Error::InvalidPubKeyType),
+            }
+        }
 
         // effects
         // Mark the channel as closed (to allow withdrawing).
         channel.control.closed = true;
         // Update the channel's state
         channel.state = state.clone();
-        // Set the parties' withdrawn bit to true, if their balance is 0
-        // in the final state.
-        channel.control.withdrawn_a = state.balances.bal_a == 0;
-        channel.control.withdrawn_b = state.balances.bal_b == 0;
 
         // Emit closed event.
         env.events().publish(
@@ -378,8 +416,6 @@ impl Adjudicator {
         // effects
         // The channel is now closed, balances can be withdrawn.
         channel.control.closed = true;
-        channel.control.withdrawn_a = channel.state.balances.bal_a == 0;
-        channel.control.withdrawn_b = channel.state.balances.bal_b == 0;
         // Emit force_closed event.
         env.events().publish(
             (symbol_short!("perun"), symbol_short!("f_closed")),
@@ -406,8 +442,9 @@ impl Adjudicator {
         new_state: State,
         sig_a_stellar: BytesN<64>,
         sig_b_stellar: BytesN<64>,
-        sig_a_eth: BytesN<65>,
-        sig_b_eth: BytesN<65>,
+        sig_a_eth: BytesN<64>,
+        sig_b_eth: BytesN<64>,
+        cross_chain: bool,
     ) -> Result<(), Error> {
         // checks
         let mut channel = get_channel(&env, &new_state.channel_id).ok_or(Error::ChannelNotFound)?;
@@ -426,20 +463,33 @@ impl Adjudicator {
 
         // We verify that the new state is signed by both parties.
         let message = new_state.clone().to_xdr(&env);
-        // env.crypto()
-        //     .ed25519_verify(&channel.params.a.pubkey, &message, &sig_a);
-        // env.crypto()
-        //     .ed25519_verify(&channel.params.b.pubkey, &message, &sig_b);
-        channel
-            .params
-            .a
-            .pubkey
-            .verify_signature(&env, &message, &sig_a_stellar, &sig_a_eth);
-        channel
-            .params
-            .b
-            .pubkey
-            .verify_signature(&env, &message, &sig_b_stellar, &sig_b_eth);
+        if cross_chain {
+            channel
+                .params
+                .a
+                .pubkey
+                .verify_signature(&env, &message, &sig_a_stellar, &sig_a_eth)?;
+            channel
+                .params
+                .b
+                .pubkey
+                .verify_signature(&env, &message, &sig_b_stellar, &sig_b_eth)?;
+        } else {
+            match &channel.params.a.pubkey {
+                multi::ChannelPubKey::Single(pubkey) => {
+                    env.crypto()
+                        .ed25519_verify(pubkey, &message, &sig_a_stellar);
+                }
+                multi::ChannelPubKey::Cross(_, _) => return Err(Error::InvalidPubKeyType),
+            }
+            match &channel.params.b.pubkey {
+                multi::ChannelPubKey::Single(pubkey) => {
+                    env.crypto()
+                        .ed25519_verify(pubkey, &message, &sig_b_stellar);
+                }
+                multi::ChannelPubKey::Cross(_, _) => return Err(Error::InvalidPubKeyType),
+            }
+        }
 
         // effects
         // We set disputed to true and update the timestamp.
@@ -479,14 +529,20 @@ impl Adjudicator {
                 }
                 // We mark that A has now withdrawn.
                 channel.control.withdrawn_a = true; // effect
-                (channel.params.a.addr.clone(), channel.state.balances.bal_a)
+                (
+                    channel.params.a.addr.clone(),
+                    channel.state.balances.bal_a.clone(),
+                )
             }
             B => {
                 if channel.control.withdrawn_b {
                     return Err(Error::AlreadyFunded);
                 }
                 channel.control.withdrawn_b = true; // effect
-                (channel.params.b.addr.clone(), channel.state.balances.bal_b)
+                (
+                    channel.params.b.addr.clone(),
+                    channel.state.balances.bal_b.clone(),
+                )
             }
         };
         actor.require_auth();
@@ -511,30 +567,41 @@ impl Adjudicator {
 
         // interact
         let contract = env.current_contract_address();
-        match &channel.state.balances.token {
+
+        let tokens = &channel.state.balances.tokens;
+
+        match &tokens {
             multi::ChannelAsset::Single(address) => {
-                let token_client = token::Client::new(&env, &address);
-                token_client.transfer(&contract, &actor.get_address(), &amount);
+                let token_client = token::Client::new(&env, address);
+                if let Some(amt) = amount.get(0) {
+                    if amt > 0 {
+                        token_client.transfer(&contract, &actor, &amt);
+                    }
+                }
             }
-            multi::ChannelAsset::Multi(address, _multi_address) => {
-                let token_client = token::Client::new(&env, &address);
-                token_client.transfer(&contract, &actor.get_address(), &amount);
+            multi::ChannelAsset::Multi(addresses) => {
+                for (i, address) in addresses.iter().enumerate() {
+                    let token_client = token::Client::new(&env, &address);
+                    if let Some(amt) = amount.get(i.try_into().unwrap()) {
+                        if amt > 0 {
+                            token_client.transfer(&contract, &actor, &amt);
+                        }
+                    }
+                }
             }
-        };
-
-        // match &channel.state.balances.token {
-        //     multi::ChannelAsset::Single(address) => {
-        //         let token_client = token::Client::new(&env, &address.clone());
-        //         token_client.transfer(&actor.get_address(), &contract, &amount);
-        //     }
-        //     multi::ChannelAsset::Multi(address, _multi_address) => {
-        //         let token_client = token::Client::new(&env, &address.clone());
-        //         token_client.transfer(&actor.get_address(), &contract, &amount);
-        //         // panic!("Attempted to use a non-single token type for transfer.");
-        //     }
-        // }
-
-        // transfer the correct amount to the withdrawing party.
+            multi::ChannelAsset::Cross(cross_assets) => {
+                for (i, cross_asset) in cross_assets.iter().enumerate() {
+                    if let multi::AddressType::Stellar(address) = &cross_asset.address {
+                        let token_client = token::Client::new(&env, address);
+                        if let Some(amt) = amount.get(i.try_into().unwrap()) {
+                            if amt > 0 {
+                                token_client.transfer(&contract, &actor, &amt);
+                            }
+                        }
+                    }
+                }
+            }
+        }
 
         Ok(())
     }
@@ -584,20 +651,40 @@ impl Adjudicator {
 
         // interact
         let contract = env.current_contract_address();
+        let tokens = &channel.state.balances.tokens;
 
-        match &channel.state.balances.token {
+        match &tokens {
             multi::ChannelAsset::Single(address) => {
-                let token_client = token::Client::new(&env, &address);
-                token_client.transfer(&contract, &actor.get_address(), &amount);
+                let token_client = token::Client::new(&env, address);
+                if let Some(amt) = amount.get(0) {
+                    if amt > 0 {
+                        token_client.transfer(&contract, &actor, &amt);
+                    }
+                }
             }
-            multi::ChannelAsset::Multi(address, _multi_address) => {
-                let token_client = token::Client::new(&env, &address);
-                token_client.transfer(&contract, &actor.get_address(), &amount);
+            multi::ChannelAsset::Multi(addresses) => {
+                for (i, address) in addresses.iter().enumerate() {
+                    let token_client = token::Client::new(&env, &address);
+                    if let Some(amt) = amount.get(i.try_into().unwrap()) {
+                        if amt > 0 {
+                            token_client.transfer(&contract, &actor, &amt);
+                        }
+                    }
+                }
             }
-        };
-
-        // let token_client = token::Client::new(&env, &channel.state.balances.token);
-        // The reclaimed funding is returned to the party.
+            multi::ChannelAsset::Cross(cross_assets) => {
+                for (i, cross_asset) in cross_assets.iter().enumerate() {
+                    if let multi::AddressType::Stellar(address) = &cross_asset.address {
+                        let token_client = token::Client::new(&env, address);
+                        if let Some(amt) = amount.get(i.try_into().unwrap()) {
+                            if amt > 0 {
+                                token_client.transfer(&contract, &actor, &amt);
+                            }
+                        }
+                    }
+                }
+            }
+        }
 
         Ok(())
     }
@@ -666,12 +753,16 @@ pub fn is_valid_state_transition(old: &State, new: &State) -> bool {
     }
     // Both states must have "coherent balances". That means they must:
     // a) share the same token as asset / currency
-    if old.balances.token != new.balances.token {
+    if old.balances.tokens != new.balances.tokens {
         return false;
     }
-    // b) The sum of the balances must be equal.
-    if old.balances.bal_a + old.balances.bal_b != new.balances.bal_a + new.balances.bal_b {
-        return false;
+    // // b) The sum of the balances must be equal.
+    for i in 0..old.balances.bal_a.len() {
+        if (old.balances.bal_a.get(i).unwrap() + old.balances.bal_b.get(i).unwrap())
+            != new.balances.bal_a.get(i).unwrap() + new.balances.bal_b.get(i).unwrap()
+        {
+            return false;
+        }
     }
     return true;
 }
