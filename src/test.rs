@@ -76,25 +76,45 @@ fn test_signature_verification() {
 fn test_honest_payment() {
     let env = Env::default();
 
-    let bal_a = vec![&env, 100, 150];
-    let bal_b = vec![&env, 200, 250];
+    // let bal_a = vec![&env, 100, 150];
+    // let bal_b = vec![&env, 200, 250];
 
-    let bal_contract_after_afund = vec![&env, 100, 150];
-    let bal_contract_after_bfund = vec![&env, 300, 400];
-    let bal_contract_after_final = vec![&env, 300, 400];
+    let bal_a = vec![&env, 100, 0];
+    let bal_b = vec![&env, 0, 250];
 
-    let bal_contract_after_awdraw = vec![&env, 200, 200];
+    // let bal_contract_after_afund = vec![&env, 100, 150];
+    // let bal_contract_after_bfund = vec![&env, 300, 400];
+    // let bal_contract_after_final = vec![&env, 300, 400];
+
+    let bal_contract_after_afund = vec![&env, 100, 0];
+    let bal_contract_after_bfund = vec![&env, 100, 250];
+    let bal_contract_after_final = vec![&env, 100, 250];
+
+    // let bal_contract_after_awdraw = vec![&env, 200, 200];
+    // let bal_contract_after_bwdraw = vec![&env, 0, 0];
+
+    let bal_contract_after_awdraw = vec![&env, 0, 200];
     let bal_contract_after_bwdraw = vec![&env, 0, 0];
 
+    // let bal_a_after_afund = vec![&env, 0, 0];
+    // let bal_a_after_awdraw = vec![&env, 100, 200];
+
     let bal_a_after_afund = vec![&env, 0, 0];
-    let bal_a_after_awdraw = vec![&env, 100, 200];
+    let bal_a_after_awdraw = vec![&env, 100, 50];
+
+    // let bal_b_after_bfund = vec![&env, 0, 0];
+    // let bal_b_after_bwdraw = vec![&env, 200, 200];
+    // let bal_a_init = vec![&env, 100, 150];
+    // let bal_b_init = vec![&env, 200, 250];
 
     let bal_b_after_bfund = vec![&env, 0, 0];
-    let bal_b_after_bwdraw = vec![&env, 200, 200];
-    let bal_a_init = vec![&env, 100, 150];
-    let bal_b_init = vec![&env, 200, 250];
+    let bal_b_after_bwdraw = vec![&env, 0, 200];
+    let bal_a_init = vec![&env, 100, 0];
+    let bal_b_init = vec![&env, 0, 250];
 
     let to_send_a = vec![&env, 0, 50];
+
+    // let to_send_a = vec![&env, 50, 0];
 
     let mut t = setup(env, 10, bal_a, bal_b, true);
 
