@@ -19,6 +19,7 @@ use soroban_sdk::{
 
 mod ethsig;
 mod multi;
+mod sol;
 
 #[contracterror]
 #[derive(Copy, Clone, Debug, Eq, PartialEq, PartialOrd, Ord)]
@@ -52,7 +53,7 @@ pub enum Error {
 
 #[contracttype]
 #[derive(Clone, Debug, Eq, PartialEq)]
-/// Balances represent a channel state's balance distribution
+// / Balances represent a channel state's balance distribution
 pub struct Balances {
     /// token represents a channel's asset / currency. Currently this contract
     /// supports single-asset channels, but multi-asset support is possible.
@@ -71,10 +72,12 @@ pub enum ChannelID {
 pub struct Participant {
     /// addr represents the participant's on-chain address.
     /// The participant receives payments on this address.
-    pub addr: Address, //multi::ChannelAddress, // Address,
+    pub stellar_addr: Address,
+    pub cc_addr: BytesN<20>,
     /// pubkey is the participant's public key. The participant's signatures on channel
     /// states must be valid under this public key.
-    pub pubkey: multi::ChannelPubKey, // BytesN<32>,
+    pub stellar_pubkey: multi::ChannelPubKey,
+    pub cc_pubkey: BytesN<65>,
 }
 
 #[contracttype]
@@ -234,7 +237,7 @@ impl Adjudicator {
                 // so doing this now is not a problem.
                 channel.control.funded_a = true; // effect
                 (
-                    channel.params.a.addr.clone(),
+                    channel.params.a.stellar_addr.clone(),
                     channel.state.balances.bal_a.clone(),
                 )
             }
@@ -245,7 +248,7 @@ impl Adjudicator {
                 }
                 channel.control.funded_b = true; // effect
                 (
-                    channel.params.b.addr.clone(),
+                    channel.params.b.stellar_addr.clone(),
                     channel.state.balances.bal_b.clone(),
                 )
             }
@@ -315,8 +318,6 @@ impl Adjudicator {
         state: State,
         sig_a_stellar: BytesN<64>,
         sig_b_stellar: BytesN<64>,
-        sig_a_eth: BytesN<64>,
-        sig_b_eth: BytesN<64>,
         cross_chain: bool,
     ) -> Result<(), Error> {
         // checks
@@ -339,27 +340,27 @@ impl Adjudicator {
             channel
                 .params
                 .a
-                .pubkey
-                .verify_signature(&env, &message, &sig_a_stellar, &sig_a_eth)?;
+                .stellar_pubkey
+                .verify_signature(&env, &message, &sig_a_stellar)?;
             channel
                 .params
                 .b
-                .pubkey
-                .verify_signature(&env, &message, &sig_b_stellar, &sig_b_eth)?;
+                .stellar_pubkey
+                .verify_signature(&env, &message, &sig_b_stellar)?;
         } else {
-            match &channel.params.a.pubkey {
+            match &channel.params.a.stellar_pubkey {
                 multi::ChannelPubKey::Single(pubkey) => {
                     env.crypto()
                         .ed25519_verify(pubkey, &message, &sig_a_stellar);
                 }
-                multi::ChannelPubKey::Cross(_, _) => return Err(Error::InvalidPubKeyType),
+                multi::ChannelPubKey::Cross(_) => return Err(Error::InvalidPubKeyType),
             }
-            match &channel.params.b.pubkey {
+            match &channel.params.b.stellar_pubkey {
                 multi::ChannelPubKey::Single(pubkey) => {
                     env.crypto()
                         .ed25519_verify(pubkey, &message, &sig_b_stellar);
                 }
-                multi::ChannelPubKey::Cross(_, _) => return Err(Error::InvalidPubKeyType),
+                multi::ChannelPubKey::Cross(_) => return Err(Error::InvalidPubKeyType),
             }
         }
 
@@ -442,8 +443,6 @@ impl Adjudicator {
         new_state: State,
         sig_a_stellar: BytesN<64>,
         sig_b_stellar: BytesN<64>,
-        sig_a_eth: BytesN<64>,
-        sig_b_eth: BytesN<64>,
         cross_chain: bool,
     ) -> Result<(), Error> {
         // checks
@@ -467,27 +466,27 @@ impl Adjudicator {
             channel
                 .params
                 .a
-                .pubkey
-                .verify_signature(&env, &message, &sig_a_stellar, &sig_a_eth)?;
+                .stellar_pubkey
+                .verify_signature(&env, &message, &sig_a_stellar)?;
             channel
                 .params
                 .b
-                .pubkey
-                .verify_signature(&env, &message, &sig_b_stellar, &sig_b_eth)?;
+                .stellar_pubkey
+                .verify_signature(&env, &message, &sig_b_stellar)?;
         } else {
-            match &channel.params.a.pubkey {
+            match &channel.params.a.stellar_pubkey {
                 multi::ChannelPubKey::Single(pubkey) => {
                     env.crypto()
                         .ed25519_verify(pubkey, &message, &sig_a_stellar);
                 }
-                multi::ChannelPubKey::Cross(_, _) => return Err(Error::InvalidPubKeyType),
+                multi::ChannelPubKey::Cross(_) => return Err(Error::InvalidPubKeyType),
             }
-            match &channel.params.b.pubkey {
+            match &channel.params.b.stellar_pubkey {
                 multi::ChannelPubKey::Single(pubkey) => {
                     env.crypto()
                         .ed25519_verify(pubkey, &message, &sig_b_stellar);
                 }
-                multi::ChannelPubKey::Cross(_, _) => return Err(Error::InvalidPubKeyType),
+                multi::ChannelPubKey::Cross(_) => return Err(Error::InvalidPubKeyType),
             }
         }
 
@@ -530,7 +529,7 @@ impl Adjudicator {
                 // We mark that A has now withdrawn.
                 channel.control.withdrawn_a = true; // effect
                 (
-                    channel.params.a.addr.clone(),
+                    channel.params.a.stellar_addr.clone(),
                     channel.state.balances.bal_a.clone(),
                 )
             }
@@ -540,7 +539,7 @@ impl Adjudicator {
                 }
                 channel.control.withdrawn_b = true; // effect
                 (
-                    channel.params.b.addr.clone(),
+                    channel.params.b.stellar_addr.clone(),
                     channel.state.balances.bal_b.clone(),
                 )
             }
@@ -633,11 +632,11 @@ impl Adjudicator {
         // Now we identify that party.
         let (actor, amount) = match channel.control.funded_a {
             true => (
-                channel.params.a.addr.clone(),
+                channel.params.a.stellar_addr.clone(),
                 channel.state.balances.bal_a.clone(),
             ),
             false => (
-                channel.params.b.addr.clone(),
+                channel.params.b.stellar_addr.clone(),
                 channel.state.balances.bal_b.clone(),
             ),
         };

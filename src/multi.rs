@@ -1,5 +1,4 @@
 use crate::Error;
-
 use soroban_sdk::{contracttype, Address, Bytes, BytesN, Env, Vec};
 
 #[contracttype]
@@ -34,16 +33,14 @@ pub enum ChannelAsset {
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub enum ChannelPubKey {
     Single(BytesN<32>),
-    Cross(BytesN<65>, BytesN<65>),
+    Cross(BytesN<65>),
 }
-
 impl ChannelPubKey {
     pub fn verify_signature(
         &self,
         env: &Env,
         msg_bytes: &Bytes,
         sig_stellar: &BytesN<64>,
-        sig_eth: &BytesN<64>,
     ) -> Result<(), Error> {
         match self {
             ChannelPubKey::Single(pub_key) => {
@@ -51,7 +48,7 @@ impl ChannelPubKey {
                     .ed25519_verify(pub_key, &msg_bytes, sig_stellar);
                 Ok(())
             }
-            ChannelPubKey::Cross(stellar_pub_key, eth_pub_key) => {
+            ChannelPubKey::Cross(stellar_pub_key) => {
                 let rec_id_0: u32 = 0;
                 let rec_id_1: u32 = 1;
                 let msg_digest = env.crypto().keccak256(&msg_bytes);
@@ -70,25 +67,12 @@ impl ChannelPubKey {
                     env.crypto()
                         .secp256k1_recover(&hashed_msg_with_prefix, &sig_stellar, rec_id_1);
 
-                if &recovered_stellar_pub_key_id_0 != stellar_pub_key
-                    && &recovered_stellar_pub_key_id_1 != stellar_pub_key
-                {
-                    return Err(Error::InvalidSignature);
-                }
-
-                let recovered_eth_pub_key_id_0 =
-                    env.crypto()
-                        .secp256k1_recover(&hashed_msg_with_prefix, &sig_eth, rec_id_0);
-                let recovered_eth_pub_key_id_1 =
-                    env.crypto()
-                        .secp256k1_recover(&hashed_msg_with_prefix, &sig_eth, rec_id_1);
-
-                if &recovered_eth_pub_key_id_0 == eth_pub_key
-                    || &recovered_eth_pub_key_id_1 == eth_pub_key
+                if &recovered_stellar_pub_key_id_0 == stellar_pub_key
+                    || &recovered_stellar_pub_key_id_1 == stellar_pub_key
                 {
                     Ok(())
                 } else {
-                    Err(Error::InvalidSignature)
+                    return Err(Error::InvalidSignature);
                 }
             }
         }
