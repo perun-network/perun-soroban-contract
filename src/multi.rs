@@ -2,10 +2,10 @@ use crate::Error;
 use soroban_sdk::{contracttype, Address, Bytes, BytesN, Env, Vec};
 
 #[contracttype]
-#[derive(Clone, Debug, Eq, PartialEq)]
+#[derive(Clone, Debug, Eq, PartialEq, Copy)]
 pub enum Chain {
-    Stellar,
-    Ethereum,
+    Stellar = 0,
+    Ethereum = 1,
 }
 
 #[contracttype]

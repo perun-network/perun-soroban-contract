@@ -15,7 +15,8 @@
 #![cfg(test)]
 
 use crate::ethsig::ethsig::EthSigner;
-use crate::get_channel_id;
+use crate::sol::get_channel_id_cross;
+
 use crate::{A, B};
 
 use crate::ethsig::ethsig::EthHash;
@@ -536,7 +537,8 @@ fn setup(
         challenge_duration: challenge_duration,
     };
 
-    let channel_id = get_channel_id(&e, &params);
+    let channel_id = get_channel_id_cross(&e, &params);
+
     let state = State {
         channel_id: channel_id.clone(),
         balances: Balances {

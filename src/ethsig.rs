@@ -28,7 +28,6 @@ pub mod ethsig {
     pub struct Signature(pub [u8; 65]);
     #[derive(Copy, Clone, PartialEq, Eq, Default)]
     pub struct EthAddress(pub [u8; 20]);
-    // #[derive(Debug)]
     pub struct EthSigner {
         skey: SigningKey,
         pubkey: VerifyingKey,

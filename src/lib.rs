@@ -168,7 +168,8 @@ impl Adjudicator {
         // checks
         // We verify that the sha_256 hash of the params matches the channel id
         // in the state.
-        let cid = get_channel_id(&env, &params);
+        let cid = sol::get_channel_id_cross(&env, &params);
+
         if !cid.eq(&state.channel_id) {
             return Err(Error::ChannelIDMissmatch);
         }
@@ -184,7 +185,6 @@ impl Adjudicator {
         if get_channel(&env, &cid).is_some() {
             return Err(Error::ChannelAlreadyExists);
         }
-
         // effects
         // Assemble the initial channel control struct.
         let control = Control {
