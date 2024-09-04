@@ -1,4 +1,4 @@
-// Copyright 2023 - See NOTICE file for copyright holders.
+// Copyright 2024 - See NOTICE file for copyright holders.
 //
 // Licensed under the Apache License, Version 2.0 (the "License");
 // you may not use this file except in compliance with the License.
@@ -11,11 +11,10 @@
 // WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 // See the License for the specific language governing permissions and
 // limitations under the License.
-
 #![no_std]
 use soroban_sdk::{
-    contract,
-    contracterror, contractimpl, contracttype, token, xdr::ToXdr, Address, BytesN, Env, symbol_short,
+    contract, contracterror, contractimpl, contracttype, symbol_short, token, vec, xdr::ToXdr,
+    Address, BytesN, Env, Vec,
 };
 
 #[contracterror]
@@ -49,11 +48,21 @@ pub enum Error {
 #[derive(Clone, Debug, Eq, PartialEq)]
 /// Balances represent a channel state's balance distribution
 pub struct Balances {
-    /// token represents a channel's asset / currency. Currently this contract
-    /// supports single-asset channels, but multi-asset support is possible.
-    token: Address,
-    pub bal_a: i128,
-    pub bal_b: i128,
+    /// token represents a channel's asset / currency. This contract
+    /// supports multi-asset channels.
+    tokens: Vec<Address>,
+    pub bal_a: Vec<i128>,
+    pub bal_b: Vec<i128>,
+}
+
+impl Balances {
+    pub fn new(env: &Env) -> Self {
+        Balances {
+            tokens: vec![env],
+            bal_a: vec![env],
+            bal_b: vec![env],
+        }
+    }
 }
 
 #[contracttype]
@@ -154,7 +163,6 @@ const B: bool = !A;
 #[contract]
 pub struct Adjudicator;
 
-
 #[contractimpl]
 impl Adjudicator {
     /// open opens a channel in the contract instance with the given parameters
@@ -184,8 +192,9 @@ impl Adjudicator {
         // Assemble the initial channel control struct.
         let control = Control {
             // We directly consider a channel to be funded by a party, if their balance is 0
-            funded_a: state.balances.bal_a == 0,
-            funded_b: state.balances.bal_b == 0,
+            funded_a: false,
+            funded_b: false,
+
             // channels are not closed, withdrawn from or disputed initially.
             closed: false,
             withdrawn_a: false,
@@ -200,8 +209,10 @@ impl Adjudicator {
         // Write the new channel to storage.
         set_channel(&env, &channel);
         // Emit open event.
-        env.events()
-            .publish((symbol_short!("perun"), symbol_short!("open")), channel.clone());
+        env.events().publish(
+            (symbol_short!("perun"), symbol_short!("open")),
+            channel.clone(),
+        );
         if is_funded(&channel) {
             env.events()
                 .publish((symbol_short!("perun"), symbol_short!("fund_c")), channel);
@@ -228,7 +239,10 @@ impl Adjudicator {
                 // Note that the transaction is rolled back, if funding fails at a later point,
                 // so doing this now is not a problem.
                 channel.control.funded_a = true; // effect
-                (channel.params.a.addr.clone(), channel.state.balances.bal_a)
+                (
+                    channel.params.a.addr.clone(),
+                    channel.state.balances.bal_a.clone(),
+                )
             }
             B => {
                 // Fund for party B.
@@ -236,14 +250,19 @@ impl Adjudicator {
                     return Err(Error::AlreadyFunded);
                 }
                 channel.control.funded_b = true; // effect
-                (channel.params.b.addr.clone(), channel.state.balances.bal_b)
+                (
+                    channel.params.b.addr.clone(),
+                    channel.state.balances.bal_b.clone(),
+                )
             }
         };
 
         // effects
         // requiring auth here might not be strictly necessary, because this should
         // already be guarded by token.transfer, but again, it can not hurt.
+
         actor.require_auth();
+
         // Write the updated channel to storage.
         set_channel(&env, &channel);
         // Emit fund event.
@@ -252,15 +271,24 @@ impl Adjudicator {
             (channel.clone(), party_idx),
         );
         if is_funded(&channel) {
-            env.events()
-                .publish((symbol_short!("perun"), symbol_short!("fund_c")), channel.clone());
+            env.events().publish(
+                (symbol_short!("perun"), symbol_short!("fund_c")),
+                channel.clone(),
+            );
         }
 
-        // interact
         let contract = env.current_contract_address();
-        let token_client = token::Client::new(&env, &channel.state.balances.token);
-        // lock the party's balance to the contract.
-        token_client.transfer(&actor, &contract, &amount);
+        let tokens = &channel.state.balances.tokens;
+
+        for i in 0..tokens.len() {
+            let token_client = token::Client::new(&env, &tokens.get(i).unwrap());
+            if let Some(amt) = amount.get(i) {
+                if amt > 0 {
+                    token_client.transfer(&actor, &contract, &amount.get(i).unwrap());
+                }
+            }
+        }
+
         Ok(())
     }
 
@@ -298,19 +326,21 @@ impl Adjudicator {
         channel.state = state.clone();
         // Set the parties' withdrawn bit to true, if their balance is 0
         // in the final state.
-        channel.control.withdrawn_a = state.balances.bal_a == 0;
-        channel.control.withdrawn_b = state.balances.bal_b == 0;
 
         // Emit closed event.
-        env.events()
-            .publish((symbol_short!("perun"), symbol_short!("closed")), channel.clone());
+        env.events().publish(
+            (symbol_short!("perun"), symbol_short!("closed")),
+            channel.clone(),
+        );
 
         if is_withdrawn(&channel) {
             // If the channel is withdrawn at this point (both balances 0)
             // we can already delete it from contract storage and
             // emit a withdraw_complete event.
-            env.events()
-                .publish((symbol_short!("perun"), symbol_short!("pay_c")), channel.clone());
+            env.events().publish(
+                (symbol_short!("perun"), symbol_short!("pay_c")),
+                channel.clone(),
+            );
             delete_channel(&env, &channel.state.channel_id)
         } else {
             // Write the updated channel to contract storage.
@@ -344,15 +374,18 @@ impl Adjudicator {
         // effects
         // The channel is now closed, balances can be withdrawn.
         channel.control.closed = true;
-        channel.control.withdrawn_a = channel.state.balances.bal_a == 0;
-        channel.control.withdrawn_b = channel.state.balances.bal_b == 0;
+
         // Emit force_closed event.
-        env.events()
-            .publish((symbol_short!("perun"), symbol_short!("f_closed")), channel.clone());
+        env.events().publish(
+            (symbol_short!("perun"), symbol_short!("f_closed")),
+            channel.clone(),
+        );
         if is_withdrawn(&channel) {
             // Emit withdraw_complete event and delete the channel.
-            env.events()
-                .publish((symbol_short!("perun"), symbol_short!("pay_c")), channel.clone());
+            env.events().publish(
+                (symbol_short!("perun"), symbol_short!("pay_c")),
+                channel.clone(),
+            );
             delete_channel(&env, &channel.state.channel_id)
         } else {
             set_channel(&env, &channel);
@@ -403,8 +436,10 @@ impl Adjudicator {
         set_channel(&env, &channel);
 
         // Emit a dispute event.
-        env.events()
-            .publish((symbol_short!("perun"), symbol_short!("dispute")), channel.clone());
+        env.events().publish(
+            (symbol_short!("perun"), symbol_short!("dispute")),
+            channel.clone(),
+        );
 
         Ok(())
     }
@@ -427,14 +462,20 @@ impl Adjudicator {
                 }
                 // We mark that A has now withdrawn.
                 channel.control.withdrawn_a = true; // effect
-                (channel.params.a.addr.clone(), channel.state.balances.bal_a)
+                (
+                    channel.params.a.addr.clone(),
+                    channel.state.balances.bal_a.clone(),
+                )
             }
             B => {
                 if channel.control.withdrawn_b {
                     return Err(Error::AlreadyFunded);
                 }
                 channel.control.withdrawn_b = true; // effect
-                (channel.params.b.addr.clone(), channel.state.balances.bal_b)
+                (
+                    channel.params.b.addr.clone(),
+                    channel.state.balances.bal_b.clone(),
+                )
             }
         };
         actor.require_auth();
@@ -448,8 +489,10 @@ impl Adjudicator {
         // effects
         if is_withdrawn(&channel) {
             // If the channel is withdrawn completely, emit an according event and delete it.
-            env.events()
-                .publish((symbol_short!("perun"), symbol_short!("pay_c")), channel.clone());
+            env.events().publish(
+                (symbol_short!("perun"), symbol_short!("pay_c")),
+                channel.clone(),
+            );
             delete_channel(&env, &channel_id);
         } else {
             set_channel(&env, &channel);
@@ -457,10 +500,18 @@ impl Adjudicator {
 
         // interact
         let contract = env.current_contract_address();
-        let token_client = token::Client::new(&env, &channel.state.balances.token);
-        // transfer the correct amount to the withdrawing party.
-        token_client.transfer(&contract, &actor, &amount);
+        let tokens = &channel.state.balances.tokens;
 
+        for i in 0..tokens.len() {
+            let token_client = token::Client::new(&env, &tokens.get(i).unwrap());
+            // Check if the amount is greater than zero before transferring.
+            if let Some(amt) = amount.get(i) {
+                if amt > 0 {
+                    // Transfer the correct amount to the withdrawing party.
+                    token_client.transfer(&contract, &actor, &amt);
+                }
+            }
+        }
         Ok(())
     }
 
@@ -509,9 +560,16 @@ impl Adjudicator {
 
         // interact
         let contract = env.current_contract_address();
-        let token_client = token::Client::new(&env, &channel.state.balances.token);
-        // The reclaimed funding is returned to the party.
-        token_client.transfer(&contract, &actor, &amount);
+        let tokens = &channel.state.balances.tokens;
+
+        for i in 0..tokens.len() {
+            let token_client = token::Client::new(&env, &tokens.get(i).unwrap());
+            if let Some(amt) = amount.get(i) {
+                if amt > 0 {
+                    token_client.transfer(&contract, &actor, &amt);
+                }
+            }
+        }
 
         Ok(())
     }
@@ -531,12 +589,16 @@ pub fn get_channel(env: &Env, id: &BytesN<32>) -> Option<Channel> {
 /// set_channel writes the given channel to persistent storage.
 /// The key is the channel id in the channel's state.
 pub fn set_channel(env: &Env, channel: &Channel) {
-    env.storage().persistent().set(&ChannelID::ID(channel.state.channel_id.clone()), channel);
+    env.storage()
+        .persistent()
+        .set(&ChannelID::ID(channel.state.channel_id.clone()), channel);
 }
 
 /// delete_channel deletes the channel with the given id from persistent storage.
 pub fn delete_channel(env: &Env, channel_id: &BytesN<32>) {
-    env.storage().persistent().remove(&ChannelID::ID(channel_id.clone()));
+    env.storage()
+        .persistent()
+        .remove(&ChannelID::ID(channel_id.clone()));
 }
 
 /// get_channel_id returns the channel id for the given channel parameters.
@@ -576,13 +638,18 @@ pub fn is_valid_state_transition(old: &State, new: &State) -> bool {
     }
     // Both states must have "coherent balances". That means they must:
     // a) share the same token as asset / currency
-    if old.balances.token != new.balances.token {
+    if old.balances.tokens != new.balances.tokens {
         return false;
     }
-    // b) The sum of the balances must be equal.
-    if old.balances.bal_a + old.balances.bal_b != new.balances.bal_a + new.balances.bal_b {
-        return false;
+    // // b) The sum of the balances must be equal.
+    for i in 0..old.balances.bal_a.len() {
+        if (old.balances.bal_a.get(i).unwrap() + old.balances.bal_b.get(i).unwrap())
+            != new.balances.bal_a.get(i).unwrap() + new.balances.bal_b.get(i).unwrap()
+        {
+            return false;
+        }
     }
+
     return true;
 }
 
