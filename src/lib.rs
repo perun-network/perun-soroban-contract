@@ -447,37 +447,47 @@ impl Adjudicator {
     /// withdraw is used to withdraw a party's balance from a closed channel.
     /// If the party_idx is false, withdraw is executed on behalf ob party A, else on behalf
     /// of party B.
-    pub fn withdraw(env: Env, channel_id: BytesN<32>, party_idx: bool) -> Result<(), Error> {
-        // checks
+    pub fn withdraw(
+        env: Env,
+        channel_id: BytesN<32>,
+        party_idx: bool,
+        one_withdrawer: bool,
+    ) -> Result<(), Error> {
+        // Retrieve the channel from storage
         let mut channel = get_channel(&env, &channel_id).ok_or(Error::ChannelNotFound)?;
+
         // Verify that the channel is closed.
         if !channel.control.closed {
             return Err(Error::WithdrawOnOpenChannel);
         }
-        let (actor, amount) = match party_idx {
+
+        // Determine the amount to withdraw based on party_idx
+        let amount = match party_idx {
             A => {
-                // We verify that A has not yet withdrawn (or 0 balance).
                 if channel.control.withdrawn_a {
                     return Err(Error::AlreadyFunded);
                 }
-                // We mark that A has now withdrawn.
-                channel.control.withdrawn_a = true; // effect
-                (
-                    channel.params.a.addr.clone(),
-                    channel.state.balances.bal_a.clone(),
-                )
+                channel.state.balances.bal_a.clone()
             }
             B => {
                 if channel.control.withdrawn_b {
                     return Err(Error::AlreadyFunded);
                 }
-                channel.control.withdrawn_b = true; // effect
-                (
-                    channel.params.b.addr.clone(),
-                    channel.state.balances.bal_b.clone(),
-                )
+                channel.state.balances.bal_b.clone()
             }
         };
+
+        // Always authenticate as party B if oneWithdrawer is true
+        let actor = if one_withdrawer {
+            channel.params.b.addr.clone()
+        } else {
+            match party_idx {
+                A => channel.params.a.addr.clone(),
+                B => channel.params.b.addr.clone(),
+            }
+        };
+
+        // Perform the authentication
         actor.require_auth();
 
         // Emit a withdraw event with the party index.
@@ -486,19 +496,7 @@ impl Adjudicator {
             (channel.clone(), party_idx),
         );
 
-        // effects
-        if is_withdrawn(&channel) {
-            // If the channel is withdrawn completely, emit an according event and delete it.
-            env.events().publish(
-                (symbol_short!("perun"), symbol_short!("pay_c")),
-                channel.clone(),
-            );
-            delete_channel(&env, &channel_id);
-        } else {
-            set_channel(&env, &channel);
-        }
-
-        // interact
+        // Perform the token transfers
         let contract = env.current_contract_address();
         let tokens = &channel.state.balances.tokens;
 
@@ -512,6 +510,25 @@ impl Adjudicator {
                 }
             }
         }
+
+        // Mark the appropriate party's withdrawal as complete
+        match party_idx {
+            A => channel.control.withdrawn_a = true,
+            B => channel.control.withdrawn_b = true,
+        }
+
+        // Handle channel state post-withdrawal
+        if is_withdrawn(&channel) {
+            // If the channel is completely withdrawn, emit a corresponding event and delete it.
+            env.events().publish(
+                (symbol_short!("perun"), symbol_short!("pay_c")),
+                channel.clone(),
+            );
+            delete_channel(&env, &channel_id);
+        } else {
+            set_channel(&env, &channel);
+        }
+
         Ok(())
     }
 
