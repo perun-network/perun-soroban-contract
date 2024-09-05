@@ -462,18 +462,25 @@ impl Adjudicator {
         }
 
         // Determine the amount to withdraw based on party_idx
-        let amount = match party_idx {
+        let (amount, receiver) = match party_idx {
             A => {
                 if channel.control.withdrawn_a {
                     return Err(Error::AlreadyFunded);
                 }
-                channel.state.balances.bal_a.clone()
+
+                (
+                    channel.state.balances.bal_a.clone(),
+                    channel.params.a.addr.clone(),
+                )
             }
             B => {
                 if channel.control.withdrawn_b {
                     return Err(Error::AlreadyFunded);
                 }
-                channel.state.balances.bal_b.clone()
+                (
+                    channel.state.balances.bal_b.clone(),
+                    channel.params.b.addr.clone(),
+                )
             }
         };
 
@@ -506,7 +513,7 @@ impl Adjudicator {
             if let Some(amt) = amount.get(i) {
                 if amt > 0 {
                     // Transfer the correct amount to the withdrawing party.
-                    token_client.transfer(&contract, &actor, &amt);
+                    token_client.transfer(&contract, &receiver, &amt);
                 }
             }
         }
