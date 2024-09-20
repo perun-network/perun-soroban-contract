@@ -15,11 +15,11 @@
 #![cfg(test)]
 
 use crate::ethsig::ethsig::EthSigner;
-use crate::sol::get_channel_id_cross;
-
-use crate::{A, B};
+// use crate::sol::get_channel_id_cross;
 
 use crate::ethsig::ethsig::EthHash;
+use crate::get_channel_id;
+use crate::{A, B};
 use ed25519_dalek::Signer;
 use ed25519_dalek::SigningKey as Ed25519SigningKey;
 use k256::ecdsa::{SigningKey, VerifyingKey};
@@ -471,7 +471,7 @@ fn setup(
         let alice = Participant {
             stellar_pubkey: alice_l2_pubkeys,
             cc_addr: alice_eth_bytesn,
-            cc_pubkey: alice_pubkey_bytesn.clone(),
+            // cc_pubkey: alice_pubkey_bytesn.clone(),
             stellar_addr: Address::generate(&e),
         };
 
@@ -479,7 +479,7 @@ fn setup(
             stellar_pubkey: bob_l2_pubkeys,
             stellar_addr: Address::generate(&e),
             cc_addr: bob_eth_bytesn,
-            cc_pubkey: bob_pubkey_bytesn.clone(),
+            // cc_pubkey: bob_pubkey_bytesn.clone(),
         };
 
         (alice, bob, alice_keypair, bob_keypair)
@@ -492,19 +492,19 @@ fn setup(
         let alice_channelpubkey = alice_pubkeybytesn.to_channel_pubkey();
         let bob_channelpubkey = bob_pubkeybytesn.to_channel_pubkey();
         let zero_cc_addr = BytesN::<20>::from_array(&e, &[0u8; 20]);
-        let zero_cc_pubkey = BytesN::<65>::from_array(&e, &[0u8; 65]);
+        // let zero_cc_pubkey = BytesN::<65>::from_array(&e, &[0u8; 65]);
 
         let alice = Participant {
             stellar_addr: Address::generate(&e),
             stellar_pubkey: alice_channelpubkey,
-            cc_pubkey: zero_cc_pubkey.clone(),
+            // cc_pubkey: zero_cc_pubkey.clone(),
             cc_addr: zero_cc_addr.clone(),
         };
         let bob = Participant {
             stellar_addr: Address::generate(&e),
             stellar_pubkey: bob_channelpubkey,
             cc_addr: zero_cc_addr,
-            cc_pubkey: zero_cc_pubkey,
+            // cc_pubkey: zero_cc_pubkey,
         };
 
         (alice, bob, alice_keypair, bob_keypair)
@@ -537,7 +537,7 @@ fn setup(
         challenge_duration: challenge_duration,
     };
 
-    let channel_id = get_channel_id_cross(&e, &params);
+    let channel_id = get_channel_id(&e, &params);
 
     let state = State {
         channel_id: channel_id.clone(),

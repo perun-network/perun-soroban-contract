@@ -19,7 +19,6 @@ use soroban_sdk::{
 
 mod ethsig;
 mod multi;
-mod sol;
 
 #[contracterror]
 #[derive(Copy, Clone, Debug, Eq, PartialEq, PartialOrd, Ord)]
@@ -77,7 +76,6 @@ pub struct Participant {
     /// pubkey is the participant's public key. The participant's signatures on channel
     /// states must be valid under this public key.
     pub stellar_pubkey: multi::ChannelPubKey,
-    pub cc_pubkey: BytesN<65>,
 }
 
 #[contracttype]
@@ -168,7 +166,7 @@ impl Adjudicator {
         // checks
         // We verify that the sha_256 hash of the params matches the channel id
         // in the state.
-        let cid = sol::get_channel_id_cross(&env, &params);
+        let cid = get_channel_id(&env, &params);
 
         if !cid.eq(&state.channel_id) {
             return Err(Error::ChannelIDMissmatch);

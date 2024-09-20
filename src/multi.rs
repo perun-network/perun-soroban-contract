@@ -53,10 +53,20 @@ impl ChannelPubKey {
                 let rec_id_1: u32 = 1;
                 let msg_digest = env.crypto().keccak256(&msg_bytes);
 
-                let eth_prefix = b"\x19Ethereum Signed Message:\n32";
+                // let eth_prefix = b"\x19Ethereum Signed Message:\n32";
+                const ETH_PREFIX: &[u8] = b"\x19Ethereum Signed Message:\n32";
+                const PREFIX_LEN: usize = 32 + ETH_PREFIX.len();
                 let hashstate_bytes: [u8; 32] = msg_digest.into();
-                let prefix_hashstate = [eth_prefix.as_ref(), &hashstate_bytes[..]].concat();
-                let prefixhash_slice: &[u8] = prefix_hashstate.as_slice();
+                // let prefix_hashstate = [eth_prefix.as_ref(), &hashstate_bytes[..]].concat();
+                // let mut prefix_hashstate = [0u8; 32 + eth_prefix.len()];
+                let mut prefix_hashstate = [0u8; PREFIX_LEN];
+
+                prefix_hashstate[..ETH_PREFIX.len()].copy_from_slice(ETH_PREFIX);
+                prefix_hashstate[ETH_PREFIX.len()..].copy_from_slice(&hashstate_bytes);
+
+                // let prefixhash_slice: &[u8] = prefix_hashstate.as_slice();
+                let prefixhash_slice: &[u8] = &prefix_hashstate; //.as_slice();
+
                 let prefixhash_bytes = Bytes::from_slice(env, prefixhash_slice);
                 let hashed_msg_with_prefix = env.crypto().keccak256(&prefixhash_bytes);
 
