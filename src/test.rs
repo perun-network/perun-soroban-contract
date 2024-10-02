@@ -173,14 +173,15 @@ fn test_honest_payment() {
     let cross_chain = true;
 
     let mut t = setup(env, 10, bal_a, bal_b, true, cross_chain);
+    let stellar_channel_id = t.state.channel_id.get_unchecked(0);
     t.client.open(&t.params, &t.state);
-    t.verify_state(&t.state);
+    t.verify_state(&t.state, &stellar_channel_id);
 
-    t.client.fund(&t.state.channel_id, &A);
+    t.client.fund(&stellar_channel_id, &A);
     t.verify_bal_contract(bal_contract_after_afund);
     t.verify_bal_a(bal_a_after_afund);
 
-    t.client.fund(&t.state.channel_id, &B);
+    t.client.fund(&stellar_channel_id, &B);
     t.verify_bal_contract(bal_contract_after_bfund);
     t.verify_bal_b(bal_b_after_bfund);
 
@@ -193,14 +194,14 @@ fn test_honest_payment() {
 
     t.client
         .close(&t.state, &sig_a_stellar, &sig_b_stellar, &cross_chain);
-    t.verify_state(&t.state);
+    t.verify_state(&t.state, &stellar_channel_id);
     t.verify_bal_contract(bal_contract_after_final);
 
-    t.client.withdraw(&t.state.channel_id, &A);
+    t.client.withdraw(&stellar_channel_id, &A);
     t.verify_bal_a(bal_a_after_awdraw);
     t.verify_bal_contract(bal_contract_after_awdraw);
 
-    t.client.withdraw(&t.state.channel_id, &B);
+    t.client.withdraw(&stellar_channel_id, &B);
     t.verify_bal_b(bal_b_after_bwdraw);
     t.verify_bal_contract(bal_contract_after_bwdraw);
 }
@@ -222,8 +223,10 @@ fn test_funding_abort() {
 
     let t = setup(env, 10, bal_a, bal_b, true, cross_chain);
 
+    let stellar_channel_id = t.state.channel_id.get_unchecked(0);
+
     t.client.open(&t.params, &t.state);
-    t.verify_state(&t.state);
+    t.verify_state(&t.state, &stellar_channel_id);
 
     t.client.fund(&t.channel_id, &A);
     t.verify_bal_contract(bal_contract_after_afund);
@@ -254,14 +257,16 @@ fn test_dispute() {
     let bal_contract_after_bwdraw = vec![&env, 0, 0];
     let mut t = setup(env, 10, bal_a, bal_b, true, cross_chain);
 
-    t.client.open(&t.params, &t.state);
-    t.verify_state(&t.state);
+    let stellar_channel_id = t.state.channel_id.get_unchecked(0);
 
-    t.client.fund(&t.state.channel_id, &A);
+    t.client.open(&t.params, &t.state);
+    t.verify_state(&t.state, &stellar_channel_id);
+
+    t.client.fund(&t.state.channel_id.get_unchecked(0), &A);
     t.verify_bal_contract(bal_contract_after_afund);
     t.verify_bal_a(bal_a_after_afund);
 
-    t.client.fund(&t.state.channel_id, &B);
+    t.client.fund(&t.state.channel_id.get_unchecked(0), &B);
     t.verify_bal_contract(bal_contract_after_bfund);
     t.verify_bal_b(bal_b_after_bfund);
 
@@ -279,7 +284,7 @@ fn test_dispute() {
     );
 
     t.client.force_close(&t.channel_id);
-    t.verify_state(&t.state);
+    t.verify_state(&t.state, &stellar_channel_id);
     t.verify_bal_contract(bal_contract_after_fclose);
 
     t.client.withdraw(&t.channel_id, &A);
@@ -313,14 +318,17 @@ fn test_malicious_dispute() {
     let to_send_bal_first = vec![&env, 50, 0];
     let to_send_bal_second = vec![&env, 0, 100];
     let mut t = setup(env, 10, bal_a, bal_b, true, cross_chain);
-    t.client.open(&t.params, &t.state);
-    t.verify_state(&t.state);
 
-    t.client.fund(&t.state.channel_id, &A);
+    let stellar_channel_id = t.state.channel_id.get_unchecked(0);
+
+    t.client.open(&t.params, &t.state);
+    t.verify_state(&t.state, &stellar_channel_id);
+
+    t.client.fund(&stellar_channel_id, &A);
     t.verify_bal_contract(bal_contract_after_afund);
     t.verify_bal_a(bal_a_after_afund);
 
-    t.client.fund(&t.state.channel_id, &B);
+    t.client.fund(&stellar_channel_id, &B);
     t.verify_bal_contract(bal_contract_after_bfund);
     t.verify_bal_b(bal_b_after_bfund);
 
@@ -337,7 +345,7 @@ fn test_malicious_dispute() {
         &old_stellar_sig_b,
         &cross_chain,
     );
-    t.verify_state(&old_state);
+    t.verify_state(&old_state, &stellar_channel_id);
 
     // dispute with latest state by A
     let sig_a_stellar = t.sigs_cc_a();
@@ -345,22 +353,22 @@ fn test_malicious_dispute() {
 
     t.client
         .dispute(&t.state, &sig_a_stellar, &sig_b_stellar, &cross_chain);
-    t.verify_state(&t.state);
+    t.verify_state(&t.state, &stellar_channel_id);
 
     t.set_ledger_time(
         t.env.ledger().get(),
         t.env.ledger().timestamp() + t.params.challenge_duration,
     );
 
-    t.client.force_close(&t.state.channel_id);
-    t.verify_state(&t.state);
+    t.client.force_close(&stellar_channel_id);
+    t.verify_state(&t.state, &stellar_channel_id);
     t.verify_bal_contract(bal_contract_after_fclose);
 
-    t.client.withdraw(&t.state.channel_id, &A);
+    t.client.withdraw(&stellar_channel_id, &A);
     t.verify_bal_a(bal_a_after_fwdraw);
     t.verify_bal_contract(bal_contract_after_awdraw);
 
-    t.client.withdraw(&t.state.channel_id, &B);
+    t.client.withdraw(&stellar_channel_id, &B);
     t.verify_bal_b(bal_b_after_fwdraw);
     t.verify_bal_contract(bal_contract_after_bwdraw);
 }
@@ -471,7 +479,6 @@ fn setup(
         let alice = Participant {
             stellar_pubkey: alice_l2_pubkeys,
             cc_addr: alice_eth_bytesn,
-            // cc_pubkey: alice_pubkey_bytesn.clone(),
             stellar_addr: Address::generate(&e),
         };
 
@@ -479,7 +486,6 @@ fn setup(
             stellar_pubkey: bob_l2_pubkeys,
             stellar_addr: Address::generate(&e),
             cc_addr: bob_eth_bytesn,
-            // cc_pubkey: bob_pubkey_bytesn.clone(),
         };
 
         (alice, bob, alice_keypair, bob_keypair)
@@ -492,19 +498,16 @@ fn setup(
         let alice_channelpubkey = alice_pubkeybytesn.to_channel_pubkey();
         let bob_channelpubkey = bob_pubkeybytesn.to_channel_pubkey();
         let zero_cc_addr = BytesN::<20>::from_array(&e, &[0u8; 20]);
-        // let zero_cc_pubkey = BytesN::<65>::from_array(&e, &[0u8; 65]);
 
         let alice = Participant {
             stellar_addr: Address::generate(&e),
             stellar_pubkey: alice_channelpubkey,
-            // cc_pubkey: zero_cc_pubkey.clone(),
             cc_addr: zero_cc_addr.clone(),
         };
         let bob = Participant {
             stellar_addr: Address::generate(&e),
             stellar_pubkey: bob_channelpubkey,
             cc_addr: zero_cc_addr,
-            // cc_pubkey: zero_cc_pubkey,
         };
 
         (alice, bob, alice_keypair, bob_keypair)
@@ -539,8 +542,15 @@ fn setup(
 
     let channel_id = get_channel_id(&e, &params);
 
+    let zero_byte_array = [0u8; 32];
+
+    // Create a BytesN<32> from the zero byte array as a dummy channel id
+    let channel_id_zero: BytesN<32> = BytesN::from_array(&e, &zero_byte_array);
+
+    let chan_ids = vec![&e, channel_id.clone(), channel_id_zero.clone()];
+
     let state = State {
-        channel_id: channel_id.clone(),
+        channel_id: chan_ids,
         balances: Balances {
             tokens: multi::ChannelAsset::Multi(token_addresses.clone()),
             bal_a: bal_a,
@@ -578,13 +588,10 @@ struct Test<'a> {
 }
 
 impl Test<'_> {
-    fn verify_state(&self, state: &State) {
-        let c = self.client.get_channel(&state.channel_id);
+    fn verify_state(&self, state: &State, channel_id: &BytesN<32>) {
+        let c = self.client.get_channel(&channel_id);
         assert!(c.is_some());
-        assert_eq!(
-            &self.client.get_channel(&state.channel_id).unwrap().state,
-            state
-        );
+        assert_eq!(&self.client.get_channel(&channel_id).unwrap().state, state);
     }
 
     fn update(&mut self, new_state: State) {

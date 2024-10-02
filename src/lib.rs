@@ -24,7 +24,7 @@ mod multi;
 #[derive(Copy, Clone, Debug, Eq, PartialEq, PartialOrd, Ord)]
 #[repr(u32)]
 pub enum Error {
-    ChannelIDMissmatch = 1,
+    ChannelIDMismatch = 1,
     InvalidVersionNumber = 2,
     OpenOnFinalState = 3,
     ChannelAlreadyExists = 4,
@@ -84,7 +84,7 @@ pub struct Participant {
 pub struct State {
     /// channel_id is always a hash of the channel Params to which this
     /// state belongs.
-    pub channel_id: BytesN<32>,
+    pub channel_id: Vec<BytesN<32>>,
     /// balances is the balance distribution between the channel's participants
     /// in this state.
     pub balances: Balances,
@@ -168,10 +168,9 @@ impl Adjudicator {
         // in the state.
         let cid = get_channel_id(&env, &params);
 
-        if !cid.eq(&state.channel_id) {
-            return Err(Error::ChannelIDMissmatch);
+        if !channel_id_matches(&state, &cid)? {
+            return Err(Error::ChannelIDMismatch);
         }
-        // We only allow channels to be opened with initial state version number 0.
         if state.version != 0 {
             return Err(Error::InvalidVersionNumber);
         }
@@ -202,7 +201,7 @@ impl Adjudicator {
         // Assemble the channel.
         let channel = make_channel(&params, &state, &control);
         // Write the new channel to storage.
-        set_channel(&env, &channel);
+        set_channel(&env, &channel, &cid);
         // Emit open event.
         env.events().publish(
             (symbol_short!("perun"), symbol_short!("open")),
@@ -258,7 +257,7 @@ impl Adjudicator {
         actor.require_auth();
 
         // Write the updated channel to storage.
-        set_channel(&env, &channel);
+        set_channel(&env, &channel, &channel_id);
         // Emit fund event.
         env.events().publish(
             (symbol_short!("perun"), symbol_short!("fund")),
@@ -323,7 +322,7 @@ impl Adjudicator {
         if !state.finalized {
             return Err(Error::CloseOnNonFinalState);
         }
-        let mut channel = get_channel(&env, &state.channel_id).ok_or(Error::ChannelNotFound)?;
+        let mut channel = find_valid_channel(&env, &state)?;
         // If the channel was not funded, we prohibit closing.
         // If we would not do this, one could drain the contract's balance
         // by opening a channel, closing without funding and subsequently withdrawing.
@@ -382,10 +381,10 @@ impl Adjudicator {
                 (symbol_short!("perun"), symbol_short!("pay_c")),
                 channel.clone(),
             );
-            delete_channel(&env, &channel.state.channel_id)
+            iter_delete_channel(&env, &channel)?;
         } else {
             // Write the updated channel to contract storage.
-            set_channel(&env, &channel);
+            iter_set_channel(&env, &channel)?;
         }
 
         Ok(())
@@ -426,9 +425,9 @@ impl Adjudicator {
                 (symbol_short!("perun"), symbol_short!("pay_c")),
                 channel.clone(),
             );
-            delete_channel(&env, &channel.state.channel_id)
+            iter_delete_channel(&env, &channel)?;
         } else {
-            set_channel(&env, &channel);
+            set_channel(&env, &channel, &channel_id);
         }
 
         Ok(())
@@ -444,7 +443,7 @@ impl Adjudicator {
         cross_chain: bool,
     ) -> Result<(), Error> {
         // checks
-        let mut channel = get_channel(&env, &new_state.channel_id).ok_or(Error::ChannelNotFound)?;
+        let mut channel = find_valid_channel(&env, &new_state)?;
         // We only allow dispute on funded channels.
         if !is_funded(&channel) {
             return Err(Error::OperationOnUnfundedChannel);
@@ -497,7 +496,7 @@ impl Adjudicator {
         channel.control.timestamp = env.ledger().timestamp();
         // Set the new state and save the updated channel in the contract storage.
         channel.state = new_state;
-        set_channel(&env, &channel);
+        iter_set_channel(&env, &channel)?;
 
         // Emit a dispute event.
         env.events().publish(
@@ -559,7 +558,7 @@ impl Adjudicator {
             );
             delete_channel(&env, &channel_id);
         } else {
-            set_channel(&env, &channel);
+            set_channel(&env, &channel, &channel_id);
         }
 
         // interact
@@ -700,10 +699,10 @@ pub fn get_channel(env: &Env, id: &BytesN<32>) -> Option<Channel> {
 
 /// set_channel writes the given channel to persistent storage.
 /// The key is the channel id in the channel's state.
-pub fn set_channel(env: &Env, channel: &Channel) {
+pub fn set_channel(env: &Env, channel: &Channel, chan_id: &BytesN<32>) {
     env.storage()
         .persistent()
-        .set(&ChannelID::ID(channel.state.channel_id.clone()), channel);
+        .set(&ChannelID::ID(chan_id.clone()), channel);
 }
 
 /// delete_channel deletes the channel with the given id from persistent storage.
@@ -711,6 +710,38 @@ pub fn delete_channel(env: &Env, channel_id: &BytesN<32>) {
     env.storage()
         .persistent()
         .remove(&ChannelID::ID(channel_id.clone()));
+}
+
+fn iter_delete_channel(env: &Env, channel: &Channel) -> Result<(), Error> {
+    let mut deletion_successful = false;
+
+    for channel_id in channel.state.channel_id.iter() {
+        delete_channel(env, &channel_id);
+
+        deletion_successful = true;
+    }
+
+    if deletion_successful {
+        Ok(())
+    } else {
+        Err(Error::ChannelIDMismatch)
+    }
+}
+
+fn iter_set_channel(env: &Env, channel: &Channel) -> Result<(), Error> {
+    let mut setting_successful = false;
+
+    for channel_id in channel.state.channel_id.iter() {
+        set_channel(env, channel, &channel_id);
+
+        setting_successful = true;
+    }
+
+    if setting_successful {
+        Ok(())
+    } else {
+        Err(Error::ChannelNotFound)
+    }
 }
 
 /// get_channel_id returns the channel id for the given channel parameters.
@@ -762,6 +793,24 @@ pub fn is_valid_state_transition(old: &State, new: &State) -> bool {
         }
     }
     return true;
+}
+
+pub fn channel_id_matches(state: &State, chan_id: &BytesN<32>) -> Result<bool, Error> {
+    for state_channel_id in state.channel_id.iter() {
+        if state_channel_id == *chan_id {
+            return Ok(true);
+        }
+    }
+    Ok(false)
+}
+
+fn find_valid_channel(env: &Env, state: &State) -> Result<Channel, Error> {
+    for state_channel_id in state.channel_id.iter() {
+        if let Some(channel) = get_channel(env, &state_channel_id) {
+            return Ok(channel);
+        }
+    }
+    Err(Error::ChannelNotFound)
 }
 
 /// A channel is considered funded, iff both funded bits are true.
