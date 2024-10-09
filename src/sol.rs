@@ -41,6 +41,7 @@ sol! {
     struct StateSol {
         bytes32[] channelID;
         uint64 version;
+        uint256[] backends;
         AllocationSol outcome;
         bytes appData;
         bool isFinal;

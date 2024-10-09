@@ -59,6 +59,7 @@ pub enum Error {
     InvalidXdrSize = 27,
     InvalidChanIdSize = 28,
     WrongChannelTypeErr = 29,
+    InvalidAddressType = 30,
 }
 
 #[contracttype]
@@ -965,9 +966,30 @@ pub fn convert_state(e: &Env, state: &State) -> Result<sol::StateSol, Error> {
 
     let outcome = convert_allocation(e, state)?;
 
+    // 1 for Ethereum, 2 for Stellar
+
+    let backends: [U256; 2] = match &state.balances.tokens {
+        multi::ChannelAsset::Cross(cross_assets) => {
+            [
+                match cross_assets.get(0).map(|asset| asset.address) {
+                    Some(multi::AddressType::Eth(_)) => U256::from(1), // 1 for Ethereum
+                    Some(multi::AddressType::Stellar(_)) => U256::from(2), // 2 for Stellar
+                    _ => return Err(Error::InvalidAddressType),
+                },
+                match cross_assets.get(1).map(|asset| asset.address) {
+                    Some(multi::AddressType::Eth(_)) => U256::from(1),
+                    Some(multi::AddressType::Stellar(_)) => U256::from(2),
+                    _ => return Err(Error::InvalidAddressType),
+                },
+            ]
+        }
+        multi::ChannelAsset::Single(_) => return Err(Error::WrongChannelTypeErr), //[U256::from(2), U256::from(2)], // Assuming Single is always Stellar
+        multi::ChannelAsset::Multi(_) => return Err(Error::WrongChannelTypeErr), //[U256::from(2), U256::from(2)], // Assuming Multi only contains Stellar addresses
+    };
     Ok(sol::StateSol {
         channelID: channel_id_vec,
         version: state.version,
+        backends: backends.to_vec(),
         outcome,
         appData: app_data_alloy,
         isFinal: is_final_alloy,
