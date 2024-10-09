@@ -12,14 +12,20 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 #![no_std]
+
+extern crate alloc;
+use alloy_sol_types::SolValue;
 use soroban_sdk::{
-    contract, contracterror, contractimpl, contracttype, symbol_short, token, xdr::ToXdr, Address,
-    BytesN, Env, Vec,
+    contract, contracterror, contractimpl, contracttype, symbol_short, token, vec, xdr::ToXdr,
+    Address, Bytes, BytesN, Env, Vec,
 };
 
 mod ethsig;
 mod multi;
-
+mod sol;
+use alloy_primitives::{
+    address, keccak256, Address as EthAddress, Bytes as PrimBytes, FixedBytes, U256, U64,
+};
 #[contracterror]
 #[derive(Copy, Clone, Debug, Eq, PartialEq, PartialOrd, Ord)]
 #[repr(u32)]
@@ -48,6 +54,11 @@ pub enum Error {
     VerificationFailed = 22,
     InvalidPubKeyType = 23,
     InvalidKeyType = 24,
+    ConversionError = 25,
+    WrongAssetType = 26,
+    InvalidXdrSize = 27,
+    InvalidChanIdSize = 28,
+    WrongChannelTypeErr = 29,
 }
 
 #[contracttype]
@@ -332,18 +343,20 @@ impl Adjudicator {
 
         // We verify both parties' signatures on the submitted final state.
         let message = state.clone().to_xdr(&env);
+        let state_sol_prefix_hash =
+            hash_state_eth_prefixed(&env, &state).expect("hashing state eth style failed");
 
         if cross_chain {
-            channel
-                .params
-                .a
-                .stellar_pubkey
-                .verify_signature(&env, &message, &sig_a_stellar)?;
-            channel
-                .params
-                .b
-                .stellar_pubkey
-                .verify_signature(&env, &message, &sig_b_stellar)?;
+            channel.params.a.stellar_pubkey.verify_signature_cross(
+                &env,
+                state_sol_prefix_hash,
+                &sig_a_stellar,
+            )?;
+            channel.params.b.stellar_pubkey.verify_signature_cross(
+                &env,
+                state_sol_prefix_hash,
+                &sig_b_stellar,
+            )?;
         } else {
             match &channel.params.a.stellar_pubkey {
                 multi::ChannelPubKey::Single(pubkey) => {
@@ -459,17 +472,21 @@ impl Adjudicator {
 
         // We verify that the new state is signed by both parties.
         let message = new_state.clone().to_xdr(&env);
+
+        let state_sol_prefix_hash =
+            hash_state_eth_prefixed(&env, &new_state).expect("hashing state eth style failed");
+
         if cross_chain {
-            channel
-                .params
-                .a
-                .stellar_pubkey
-                .verify_signature(&env, &message, &sig_a_stellar)?;
-            channel
-                .params
-                .b
-                .stellar_pubkey
-                .verify_signature(&env, &message, &sig_b_stellar)?;
+            channel.params.a.stellar_pubkey.verify_signature_cross(
+                &env,
+                state_sol_prefix_hash,
+                &sig_a_stellar,
+            )?;
+            channel.params.b.stellar_pubkey.verify_signature_cross(
+                &env,
+                state_sol_prefix_hash,
+                &sig_b_stellar,
+            )?;
         } else {
             match &channel.params.a.stellar_pubkey {
                 multi::ChannelPubKey::Single(pubkey) => {
@@ -832,6 +849,141 @@ pub fn is_timelock_expired(env: &Env, channel: &Channel) -> bool {
     }
     let current_time = env.ledger().timestamp();
     return channel.control.timestamp + channel.params.challenge_duration <= current_time;
+}
+
+pub fn get_cross_assets(e: &Env, state: &State) -> Result<Vec<multi::CrossAsset>, Error> {
+    match &state.balances.tokens {
+        multi::ChannelAsset::Cross(cross_assets) => Ok(cross_assets.clone()),
+        multi::ChannelAsset::Single(_) => Err(Error::ConversionError),
+        multi::ChannelAsset::Multi(_) => Err(Error::ConversionError),
+    }
+}
+
+pub fn convert_cross_assets(
+    e: &Env,
+    cross_assets: &Vec<multi::CrossAsset>,
+) -> Result<(sol::AssetSol, sol::AssetSol), Error> {
+    if cross_assets.len() != 2 {
+        return Err(Error::ConversionError);
+    }
+
+    let convert_asset = |cross_asset: &multi::CrossAsset| -> Result<sol::AssetSol, Error> {
+        let chain_id = U256::from(cross_asset.chain as u8);
+
+        // Define zero addresses, note that we need +8Bytes for Bytes arrays.
+        let zero_eth_address = EthAddress::from_slice(&[0u8; 20]);
+        let zero_stellar_address = PrimBytes::copy_from_slice(&[0u8; 40]);
+
+        let (eth_holder, cc_holder) = match &cross_asset.address {
+            multi::AddressType::Eth(eth_address) => {
+                // Handle Ethereum address
+                let mut eth_addr_slice = [0u8; 20];
+                eth_address.copy_into_slice(&mut eth_addr_slice);
+
+                let eth_addr_sol = EthAddress::from_slice(&eth_addr_slice);
+
+                (eth_addr_sol, zero_stellar_address)
+            }
+            multi::AddressType::Stellar(stellar_address) => {
+                // Handle Stellar address
+                let cc_holder_xdr = stellar_address.to_xdr(e);
+                let mut cc_holder_slice = [0u8; 40];
+                cc_holder_xdr.copy_into_slice(&mut cc_holder_slice);
+
+                let cc_holder_sol = PrimBytes::copy_from_slice(&cc_holder_slice);
+
+                (zero_eth_address, cc_holder_sol)
+            }
+        };
+
+        Ok(sol::AssetSol {
+            chainID: chain_id,
+            ethHolder: eth_holder,
+            ccHolder: cc_holder,
+        })
+    };
+
+    let asset_0 = convert_asset(&cross_assets.get_unchecked(0))?;
+    let asset_1 = convert_asset(&cross_assets.get_unchecked(1))?;
+
+    Ok((asset_0, asset_1))
+}
+
+pub fn convert_allocation(e: &Env, state: &State) -> Result<sol::AllocationSol, Error> {
+    // Ensure that there are exactly two cross-chain assets
+    let cross_assets = match &state.balances.tokens {
+        multi::ChannelAsset::Cross(cross_assets) if cross_assets.len() == 2 => cross_assets.clone(),
+        _ => return Err(Error::ConversionError),
+    };
+
+    // Use convert_cross_assets to convert both assets
+    let (asset_sol_0, asset_sol_1) = convert_cross_assets(e, &cross_assets)?;
+
+    // Convert balances
+    let bals_cc_a = U256::from(state.balances.bal_a.get(0).ok_or(Error::ConversionError)?);
+    let bals_stellar_a = U256::from(state.balances.bal_a.get(1).ok_or(Error::ConversionError)?);
+    let bals_cc_b = U256::from(state.balances.bal_b.get(0).ok_or(Error::ConversionError)?);
+    let bals_stellar_b = U256::from(state.balances.bal_b.get(1).ok_or(Error::ConversionError)?);
+
+    // Construct the AllocationSol with the vectors
+    Ok(sol::AllocationSol {
+        assets: [asset_sol_0, asset_sol_1].to_vec(),
+        balances: [
+            [bals_cc_a, bals_cc_b].to_vec(),
+            [bals_stellar_a, bals_stellar_b].to_vec(),
+        ]
+        .to_vec(),
+        // locked: vec![e], // Assuming this is handled elsewhere or not needed
+    })
+}
+
+pub fn convert_state(e: &Env, state: &State) -> Result<sol::StateSol, Error> {
+    // let channel_id_xdr = state.channel_id.clone().to_xdr(e);
+
+    let channel_id_0 = state.channel_id.get_unchecked(0);
+    let channel_id_1 = state.channel_id.get_unchecked(1);
+
+    // Define the expected length
+    let chanid_len = 32;
+
+    // Check if the length of channel_id_xdr matches the expected length
+    if channel_id_0.len() != chanid_len {
+        return Err(Error::InvalidChanIdSize); // Ensure this error variant is defined
+    }
+
+    let mut channel_id_slice_0 = [0u8; 32];
+    let mut channel_id_slice_1 = [0u8; 32];
+
+    channel_id_0.copy_into_slice(&mut channel_id_slice_0);
+    channel_id_1.copy_into_slice(&mut channel_id_slice_1);
+
+    let channel_id_alloy_0 = FixedBytes::from_slice(&channel_id_slice_0);
+    let channel_id_alloy_1 = FixedBytes::from_slice(&channel_id_slice_1);
+    let channel_id_vec = [channel_id_alloy_0, channel_id_alloy_1].to_vec();
+    let app_data_alloy = PrimBytes::copy_from_slice(&[0u8; 40]);
+    let is_final_alloy = state.finalized;
+
+    let outcome = convert_allocation(e, state)?;
+
+    Ok(sol::StateSol {
+        channelID: channel_id_vec,
+        version: state.version,
+        outcome,
+        appData: app_data_alloy,
+        isFinal: is_final_alloy,
+    })
+}
+
+pub fn hash_state_eth_prefixed(e: &Env, state: &State) -> Result<FixedBytes<32>, Error> {
+    let state_sik = convert_state(&e, &state)?;
+
+    let state_abienc = state_sik.abi_encode();
+    let state_sol_hashed = keccak256(&state_abienc);
+    let prefix = b"\x19Ethereum Signed Message:\n32";
+    let prefix_hash = [prefix.as_ref(), &state_sol_hashed[..]].concat();
+
+    let state_sol_prefix_hash = keccak256(&prefix_hash);
+    Ok(state_sol_prefix_hash)
 }
 
 #[cfg(test)]

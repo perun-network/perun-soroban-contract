@@ -13,19 +13,22 @@
 // limitations under the License.
 
 #![cfg(test)]
+use alloy_primitives::{address, keccak256, Address as EthAddr};
 
 use crate::ethsig::ethsig::EthSigner;
-// use crate::sol::get_channel_id_cross;
+use crate::sol::get_channel_id_cross;
 
+use crate::convert_state;
 use crate::ethsig::ethsig::EthHash;
 use crate::get_channel_id;
+use crate::multi::AddressType;
 use crate::{A, B};
+use alloy_sol_types::SolValue;
 use ed25519_dalek::Signer;
 use ed25519_dalek::SigningKey as Ed25519SigningKey;
 use k256::ecdsa::{SigningKey, VerifyingKey};
 use k256::elliptic_curve::sec1::ToEncodedPoint;
 use rand::thread_rng;
-
 use soroban_sdk::token::StellarAssetClient;
 use soroban_sdk::xdr::ToXdr;
 use soroban_sdk::{token, Bytes, IntoVal};
@@ -54,7 +57,7 @@ fn test_signature_verification_secp256k1() {
     bal_b.push_back(200_i128);
     bal_b.push_back(250_i128);
 
-    let t = setup(env, 10, bal_a, bal_b, true, true);
+    let t = setup(&env, 10, bal_a, bal_b, true, true, false);
 
     let msg_text: &[u8] = b"hello world";
     let msg_bytes = Bytes::from_slice(&t.env, msg_text);
@@ -108,7 +111,7 @@ fn test_signature_verification_k256() {
     bal_b.push_back(200_i128);
     bal_b.push_back(250_i128);
 
-    let t = setup(env, 10, bal_a, bal_b, true, true);
+    let t = setup(&env, 10, bal_a, bal_b, true, true, false);
 
     let msg_text: &[u8] = b"hello world";
     let msg_bytes = Bytes::from_slice(&t.env, msg_text);
@@ -148,7 +151,7 @@ fn test_signature_verification_k256() {
 }
 
 #[test]
-fn test_honest_payment() {
+fn test_honest_payment_cross_sameasset() {
     let env = Env::default();
     let mut bal_a = vec![&env];
 
@@ -171,9 +174,11 @@ fn test_honest_payment() {
     bal_b.push_back(250_i128);
 
     let cross_chain = true;
+    let mixed_assets = false;
 
-    let mut t = setup(env, 10, bal_a, bal_b, true, cross_chain);
+    let mut t = setup(&env, 10, bal_a, bal_b, true, cross_chain, mixed_assets);
     let stellar_channel_id = t.state.channel_id.get_unchecked(0);
+
     t.client.open(&t.params, &t.state);
     t.verify_state(&t.state, &stellar_channel_id);
 
@@ -189,8 +194,8 @@ fn test_honest_payment() {
 
     t.finalize();
 
-    let sig_a_stellar = t.sigs_cc_a();
-    let sig_b_stellar = t.sigs_cc_b();
+    let sig_a_stellar = t.sigs_ccabi_a();
+    let sig_b_stellar = t.sigs_ccabi_b();
 
     t.client
         .close(&t.state, &sig_a_stellar, &sig_b_stellar, &cross_chain);
@@ -207,7 +212,68 @@ fn test_honest_payment() {
 }
 
 #[test]
-fn test_funding_abort() {
+fn test_honest_payment_cross_mixedssets() {
+    let env = Env::default();
+    let mut bal_a = vec![&env];
+
+    let bal_contract_after_afund = vec![&env, 100, 150];
+    let bal_contract_after_bfund = vec![&env, 300, 400];
+    let bal_contract_after_awdraw = vec![&env, 200, 200];
+    let bal_contract_after_bwdraw = vec![&env, 0, 0];
+    let bal_contract_after_final = vec![&env, 300, 400];
+    let bal_a_after_afund = vec![&env, 0, 0];
+    let bal_a_after_awdraw = vec![&env, 100, 200];
+    let bal_b_after_bfund = vec![&env, 0, 0];
+    let bal_b_after_bwdraw = vec![&env, 200, 200];
+    let to_send_a = vec![&env, 0, 50];
+
+    bal_a.push_back(100_i128);
+    bal_a.push_back(150_i128);
+
+    let mut bal_b = vec![&env];
+    bal_b.push_back(200_i128);
+    bal_b.push_back(250_i128);
+
+    let cross_chain = true;
+    let mixed_assets = true;
+
+    let mut t = setup(&env, 10, bal_a, bal_b, true, cross_chain, mixed_assets);
+    let stellar_channel_id = t.state.channel_id.get_unchecked(0);
+
+    t.client.open(&t.params, &t.state);
+    t.verify_state(&t.state, &stellar_channel_id);
+
+    t.client.fund(&stellar_channel_id, &A);
+    t.verify_bal_contract(bal_contract_after_afund);
+    t.verify_bal_a(bal_a_after_afund);
+
+    t.client.fund(&stellar_channel_id, &B);
+    t.verify_bal_contract(bal_contract_after_bfund);
+    t.verify_bal_b(bal_b_after_bfund);
+
+    t.send_to_a(to_send_a);
+
+    t.finalize();
+
+    let sig_a_stellar = t.sigs_ccabi_a();
+    let sig_b_stellar = t.sigs_ccabi_b();
+
+    t.client
+        .close(&t.state, &sig_a_stellar, &sig_b_stellar, &cross_chain);
+    t.verify_state(&t.state, &stellar_channel_id);
+    t.verify_bal_contract(bal_contract_after_final);
+
+    t.client.withdraw(&stellar_channel_id, &A);
+    t.verify_bal_a(bal_a_after_awdraw);
+    t.verify_bal_contract(bal_contract_after_awdraw);
+
+    t.client.withdraw(&stellar_channel_id, &B);
+    t.verify_bal_b(bal_b_after_bwdraw);
+    t.verify_bal_contract(bal_contract_after_bwdraw);
+}
+
+#[test]
+fn test_funding_abort_cross_sameasset() {
     let env = Env::default();
 
     let cross_chain = true;
@@ -221,7 +287,7 @@ fn test_funding_abort() {
     let bal_contract_after_afund = vec![&env, 100, 150];
     let bal_contract_after_abort = vec![&env, 0, 0];
 
-    let t = setup(env, 10, bal_a, bal_b, true, cross_chain);
+    let t = setup(&env, 10, bal_a, bal_b, true, cross_chain, false);
 
     let stellar_channel_id = t.state.channel_id.get_unchecked(0);
 
@@ -238,9 +304,42 @@ fn test_funding_abort() {
 }
 
 #[test]
-fn test_dispute() {
+fn test_funding_abort_cross_mixedassets() {
+    let env = Env::default();
+
+    let cross_chain = true;
+    let mixed_assets = true;
+
+    let bal_a = vec![&env, 100, 150];
+    let bal_b = vec![&env, 200, 250];
+
+    let bal_a_after_fund = vec![&env, 0, 0];
+    let bal_a_after_abort = vec![&env, 100, 150];
+
+    let bal_contract_after_afund = vec![&env, 100, 150];
+    let bal_contract_after_abort = vec![&env, 0, 0];
+
+    let t = setup(&env, 10, bal_a, bal_b, true, cross_chain, mixed_assets);
+
+    let stellar_channel_id = t.state.channel_id.get_unchecked(0);
+
+    t.client.open(&t.params, &t.state);
+    t.verify_state(&t.state, &stellar_channel_id);
+
+    t.client.fund(&t.channel_id, &A);
+    t.verify_bal_contract(bal_contract_after_afund);
+    t.verify_bal_a(bal_a_after_fund);
+
+    t.client.abort_funding(&t.channel_id);
+    t.verify_bal_contract(bal_contract_after_abort);
+    t.verify_bal_a(bal_a_after_abort);
+}
+
+#[test]
+fn test_dispute_cross_sameasset() {
     let env = Env::default();
     let cross_chain = true;
+
     let bal_contract_after_afund = vec![&env, 100, 150];
     let bal_contract_after_bfund = vec![&env, 300, 400];
     let bal_a_after_wdraw = vec![&env, 100, 200];
@@ -255,7 +354,7 @@ fn test_dispute() {
     let bal_contract_after_fclose = vec![&env, 300, 400];
     let bal_contract_after_awdraw = vec![&env, 200, 200];
     let bal_contract_after_bwdraw = vec![&env, 0, 0];
-    let mut t = setup(env, 10, bal_a, bal_b, true, cross_chain);
+    let mut t = setup(&env, 10, bal_a, bal_b, true, cross_chain, false);
 
     let stellar_channel_id = t.state.channel_id.get_unchecked(0);
 
@@ -272,9 +371,68 @@ fn test_dispute() {
 
     t.send_to_a(to_send_a);
 
-    let sig_a_stellar = t.sigs_cc_a();
-    let sig_b_stellar = t.sigs_cc_b();
+    let sig_a_stellar = t.sigs_ccabi_a();
+    let sig_b_stellar = t.sigs_ccabi_b();
 
+    t.client
+        .dispute(&t.state, &sig_a_stellar, &sig_b_stellar, &cross_chain);
+
+    t.set_ledger_time(
+        t.env.ledger().get(),
+        t.env.ledger().timestamp() + t.params.challenge_duration,
+    );
+
+    t.client.force_close(&t.channel_id);
+    t.verify_state(&t.state, &stellar_channel_id);
+    t.verify_bal_contract(bal_contract_after_fclose);
+
+    t.client.withdraw(&t.channel_id, &A);
+    t.verify_bal_a(bal_a_after_wdraw);
+    t.verify_bal_contract(bal_contract_after_awdraw);
+
+    t.client.withdraw(&t.channel_id, &B);
+    t.verify_bal_b(bal_b_after_wdraw);
+    t.verify_bal_contract(bal_contract_after_bwdraw);
+}
+
+#[test]
+fn test_dispute_cross_mixedassets() {
+    let env = Env::default();
+    let cross_chain = true;
+    let mixed_assets = true;
+    let bal_contract_after_afund = vec![&env, 100, 150];
+    let bal_contract_after_bfund = vec![&env, 300, 400];
+    let bal_a_after_wdraw = vec![&env, 100, 200];
+    let bal_b_after_wdraw = vec![&env, 200, 200];
+    let bal_a_after_afund = vec![&env, 0, 0];
+    let bal_b_after_bfund = vec![&env, 0, 0];
+    let to_send_a = vec![&env, 0, 50];
+
+    let bal_a = vec![&env, 100, 150];
+    let bal_b = vec![&env, 200, 250];
+
+    let bal_contract_after_fclose = vec![&env, 300, 400];
+    let bal_contract_after_awdraw = vec![&env, 200, 200];
+    let bal_contract_after_bwdraw = vec![&env, 0, 0];
+    let mut t = setup(&env, 10, bal_a, bal_b, true, cross_chain, mixed_assets);
+
+    let stellar_channel_id = t.state.channel_id.get_unchecked(0);
+
+    t.client.open(&t.params, &t.state);
+    t.verify_state(&t.state, &stellar_channel_id);
+
+    t.client.fund(&t.state.channel_id.get_unchecked(0), &A);
+    t.verify_bal_contract(bal_contract_after_afund);
+    t.verify_bal_a(bal_a_after_afund);
+
+    t.client.fund(&t.state.channel_id.get_unchecked(0), &B);
+    t.verify_bal_contract(bal_contract_after_bfund);
+    t.verify_bal_b(bal_b_after_bfund);
+
+    t.send_to_a(to_send_a);
+
+    let sig_a_stellar = t.sigs_ccabi_a();
+    let sig_b_stellar = t.sigs_ccabi_b();
     t.client
         .dispute(&t.state, &sig_a_stellar, &sig_b_stellar, &cross_chain);
 
@@ -317,7 +475,7 @@ fn test_malicious_dispute() {
 
     let to_send_bal_first = vec![&env, 50, 0];
     let to_send_bal_second = vec![&env, 0, 100];
-    let mut t = setup(env, 10, bal_a, bal_b, true, cross_chain);
+    let mut t = setup(&env, 10, bal_a, bal_b, true, cross_chain, false);
 
     let stellar_channel_id = t.state.channel_id.get_unchecked(0);
 
@@ -334,7 +492,7 @@ fn test_malicious_dispute() {
 
     t.send_to_a(to_send_bal_first);
 
-    let (old_state, old_stellar_sig_a, old_stellar_sig_b) = t.state_and_sigs_cross();
+    let (old_state, old_stellar_sig_a, old_stellar_sig_b) = t.state_and_sigs_cross_abi();
 
     t.send_to_b(to_send_bal_second);
 
@@ -348,9 +506,8 @@ fn test_malicious_dispute() {
     t.verify_state(&old_state, &stellar_channel_id);
 
     // dispute with latest state by A
-    let sig_a_stellar = t.sigs_cc_a();
-    let sig_b_stellar = t.sigs_cc_b();
-
+    let sig_a_stellar = t.sigs_ccabi_a();
+    let sig_b_stellar = t.sigs_ccabi_b();
     t.client
         .dispute(&t.state, &sig_a_stellar, &sig_b_stellar, &cross_chain);
     t.verify_state(&t.state, &stellar_channel_id);
@@ -408,6 +565,31 @@ fn sign_cross(e: &Env, signer: &TestKeyPair, payload: &State) -> BytesN<64> {
     }
 }
 
+fn sign_cross_abi(e: &Env, signer: &TestKeyPair, payload: &State) -> BytesN<64> {
+    let state_sol = convert_state(&e, &payload).unwrap();
+    let state_sol_abi = state_sol.abi_encode();
+
+    let state_sol_hashed = keccak256(&state_sol_abi);
+    let state_sol_bytesn = BytesN::<32>::from_array(&e, &state_sol_hashed);
+
+    let ethhash = EthHash(state_sol_bytesn.into());
+    match signer {
+        TestKeyPair::Cross(keypair1) => {
+            let sig1 = keypair1.sign_eth(&ethhash);
+            let sig1_ethbytes = sig1.0;
+            let mut sig1_ethbytes_trimmed: [u8; 64] = [0u8; 64];
+            sig1_ethbytes_trimmed.copy_from_slice(&sig1_ethbytes[0..64]);
+
+            let sig1_bytes = BytesN::<64>::from_array(&e, &sig1_ethbytes_trimmed);
+
+            sig1_bytes
+        }
+        TestKeyPair::Single(_) => {
+            panic!("Only use this function for cross keypair");
+        }
+    }
+}
+
 fn public_key(e: &Env, signer: &Ed25519SigningKey) -> BytesN<32> {
     signer.verifying_key().to_bytes().into_val(e)
 }
@@ -416,12 +598,13 @@ fn generate_keypair() -> Ed25519SigningKey {
 }
 
 fn setup(
-    e: Env,
+    e: &Env,
     challenge_duration: u64,
     bal_a: Vec<i128>,
     bal_b: Vec<i128>,
     mock_auth: bool,
     cross_chain: bool,
+    mixed_assets: bool,
 ) -> Test<'static> {
     let ledgerinf = LedgerInfo {
         timestamp: 0,
@@ -521,7 +704,41 @@ fn setup(
         panic!("balances arrays are not of same length");
     }
     let mut token_addresses = vec![&e];
-    for i in 0..bal_a.len() {
+
+    let mut cross_assets_0 = multi::CrossAsset {
+        address: AddressType::Stellar(Address::generate(&e)),
+        chain: multi::Chain::Stellar,
+    };
+
+    let mut cross_assets_1 = multi::CrossAsset {
+        address: AddressType::Stellar(Address::generate(&e)),
+        chain: multi::Chain::Stellar,
+    };
+
+    if mixed_assets == false {
+        for i in 0..bal_a.len() {
+            let admin_address = Address::generate(&e);
+            let token_admin = StellarAssetClient::new(
+                &e,
+                &e.register_stellar_asset_contract(admin_address.clone()),
+            );
+            token_addresses.push_back(token_admin.address.clone());
+
+            token_admin.mint(&alice.stellar_addr, &bal_a.get(i).unwrap());
+            token_admin.mint(&bob.stellar_addr, &bal_b.get(i).unwrap());
+        }
+        cross_assets_0 = multi::CrossAsset {
+            address: AddressType::Stellar(token_addresses.get(0).unwrap().clone()),
+            chain: multi::Chain::Stellar,
+        };
+
+        cross_assets_1 = multi::CrossAsset {
+            address: AddressType::Stellar(token_addresses.get(1).unwrap().clone()),
+            chain: multi::Chain::Stellar,
+        };
+    }
+
+    if mixed_assets {
         let admin_address = Address::generate(&e);
         let token_admin = StellarAssetClient::new(
             &e,
@@ -529,8 +746,29 @@ fn setup(
         );
         token_addresses.push_back(token_admin.address.clone());
 
-        token_admin.mint(&alice.stellar_addr, &bal_a.get(i).unwrap());
-        token_admin.mint(&bob.stellar_addr, &bal_b.get(i).unwrap());
+        token_admin.mint(&alice.stellar_addr, &bal_a.get(0).unwrap());
+        token_admin.mint(&bob.stellar_addr, &bal_b.get(0).unwrap());
+
+        cross_assets_0 = multi::CrossAsset {
+            address: AddressType::Stellar(token_addresses.get(0).unwrap().clone()),
+            chain: multi::Chain::Stellar,
+        };
+
+        let checksummed = "0xd8dA6BF26964aF9D7eEd9e03E53415D37aA96045";
+        let expected = address!("d8da6bf26964af9d7eed9e03e53415d37aa96045");
+        let eth_address = EthAddr::parse_checksummed(checksummed, None).expect("valid checksum");
+        assert_eq!(eth_address, expected);
+
+        let eth_addr_slice = eth_address.as_slice();
+        let eth_addr_array: &[u8; 20] = eth_addr_slice
+            .try_into()
+            .expect("ethereum address slice is not of length 20");
+        let eth_addr_bytes = BytesN::<20>::from_array(&e, eth_addr_array);
+
+        cross_assets_1 = multi::CrossAsset {
+            address: AddressType::Eth(eth_addr_bytes),
+            chain: multi::Chain::Ethereum,
+        };
     }
 
     let params = Params {
@@ -552,7 +790,7 @@ fn setup(
     let state = State {
         channel_id: chan_ids,
         balances: Balances {
-            tokens: multi::ChannelAsset::Multi(token_addresses.clone()),
+            tokens: multi::ChannelAsset::Cross(vec![&e, cross_assets_0, cross_assets_1]), //vec![&e, cross_assets_1, cross_assets_2]
             bal_a: bal_a,
             bal_b: bal_b,
         },
@@ -561,7 +799,7 @@ fn setup(
     };
     let client = AdjudicatorClient::new(&e, &e.register_contract(None, Adjudicator {}));
     Test {
-        env: e,
+        env: e.clone(),
         alice,
         bob,
         alice_keypair,
@@ -693,6 +931,14 @@ impl Test<'_> {
         sign_cross(&self.env, &self.bob_keypair, &self.state)
     }
 
+    fn sigs_ccabi_a(&self) -> BytesN<64> {
+        sign_cross_abi(&self.env, &self.alice_keypair, &self.state)
+    }
+
+    fn sigs_ccabi_b(&self) -> BytesN<64> {
+        sign_cross_abi(&self.env, &self.bob_keypair, &self.state)
+    }
+
     fn sigs_single_a(&self) -> BytesN<64> {
         sign_single(&self.env, &self.alice_keypair, &self.state)
     }
@@ -749,6 +995,12 @@ impl Test<'_> {
     fn state_and_sigs_cross(&self) -> (State, BytesN<64>, BytesN<64>) {
         let sig_a = self.sigs_cc_a();
         let sig_b = self.sigs_cc_b();
+        (self.state.clone(), sig_a, sig_b)
+    }
+
+    fn state_and_sigs_cross_abi(&self) -> (State, BytesN<64>, BytesN<64>) {
+        let sig_a = self.sigs_ccabi_a();
+        let sig_b = self.sigs_ccabi_b();
         (self.state.clone(), sig_a, sig_b)
     }
 }

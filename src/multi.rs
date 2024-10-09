@@ -1,6 +1,11 @@
 use crate::Error;
-use soroban_sdk::{contracttype, Address, Bytes, BytesN, Env, Vec};
+use alloy_primitives::{
+    keccak256, Address as EthAddress, Bytes as PrimBytes, FixedBytes, U256, U64,
+};
+use alloy_sol_types::sol;
+use alloy_sol_types::SolValue;
 
+use soroban_sdk::{contracttype, Address, Bytes, BytesN, Env, Vec};
 #[contracttype]
 #[derive(Clone, Debug, Eq, PartialEq, Copy)]
 pub enum Chain {
@@ -76,6 +81,44 @@ impl ChannelPubKey {
                 let recovered_stellar_pub_key_id_1 =
                     env.crypto()
                         .secp256k1_recover(&hashed_msg_with_prefix, &sig_stellar, rec_id_1);
+
+                if &recovered_stellar_pub_key_id_0 == stellar_pub_key
+                    || &recovered_stellar_pub_key_id_1 == stellar_pub_key
+                {
+                    Ok(())
+                } else {
+                    return Err(Error::InvalidSignature);
+                }
+            }
+        }
+    }
+
+    pub fn verify_signature_cross(
+        &self,
+        env: &Env,
+        msg_bytes: FixedBytes<32>, //&Bytes,
+        sig_stellar: &BytesN<64>,
+    ) -> Result<(), Error> {
+        match self {
+            ChannelPubKey::Single(_pub_key) => Err(Error::WrongChannelTypeErr),
+            ChannelPubKey::Cross(stellar_pub_key) => {
+                let rec_id_0: u32 = 0;
+                let rec_id_1: u32 = 1;
+
+                let mut state_sol_abi: [u8; 32] = [0u8; 32];
+
+                let ssl = msg_bytes.as_slice();
+
+                state_sol_abi.copy_from_slice(&ssl);
+
+                let hash_final = BytesN::<32>::from_array(env, &state_sol_abi);
+
+                let recovered_stellar_pub_key_id_0 =
+                    env.crypto()
+                        .secp256k1_recover(&hash_final, &sig_stellar, rec_id_0);
+                let recovered_stellar_pub_key_id_1 =
+                    env.crypto()
+                        .secp256k1_recover(&hash_final, &sig_stellar, rec_id_1);
 
                 if &recovered_stellar_pub_key_id_0 == stellar_pub_key
                     || &recovered_stellar_pub_key_id_1 == stellar_pub_key

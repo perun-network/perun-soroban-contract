@@ -108,7 +108,6 @@ pub mod ethsig {
             msg: EthHash,
             eth_sig: Signature,
         ) -> Result<EthAddress, Error> {
-            // "\x19Ethereum Signed Message:\n32" format
             let hash = hash_to_eth_signed_msg_hash(&msg);
 
             // Undo adding the 27, to go back to the format expected below

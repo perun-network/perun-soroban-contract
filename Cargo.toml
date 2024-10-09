@@ -10,8 +10,10 @@ crate-type = ["cdylib"]
 testutils = ["soroban-sdk/testutils"]
 
 [dependencies]
-soroban-sdk = "20.5.0"
-
+soroban-sdk = {version = "20.5.0", features = ["alloc"]}
+alloy-sol-macro = "0.7.7"  
+alloy-sol-types = {version = "0.7.7", default-features = false}
+alloy-primitives = {version = "0.7.7", default-features = false}
 
 [dev_dependencies]
 soroban-sdk = { version = "20.5.0", features = ["testutils"] }
