@@ -707,12 +707,12 @@ fn setup(
 
     let mut cross_assets_0 = multi::CrossAsset {
         address: AddressType::Stellar(Address::generate(&e)),
-        chain: multi::Chain::Stellar,
+        chain: multi::Chain::new(2),
     };
 
     let mut cross_assets_1 = multi::CrossAsset {
         address: AddressType::Stellar(Address::generate(&e)),
-        chain: multi::Chain::Stellar,
+        chain: multi::Chain::new(2),
     };
 
     if mixed_assets == false {
@@ -729,12 +729,12 @@ fn setup(
         }
         cross_assets_0 = multi::CrossAsset {
             address: AddressType::Stellar(token_addresses.get(0).unwrap().clone()),
-            chain: multi::Chain::Stellar,
+            chain: multi::Chain::new(2),
         };
 
         cross_assets_1 = multi::CrossAsset {
             address: AddressType::Stellar(token_addresses.get(1).unwrap().clone()),
-            chain: multi::Chain::Stellar,
+            chain: multi::Chain::new(2),
         };
     }
 
@@ -751,7 +751,7 @@ fn setup(
 
         cross_assets_0 = multi::CrossAsset {
             address: AddressType::Stellar(token_addresses.get(0).unwrap().clone()),
-            chain: multi::Chain::Stellar,
+            chain: multi::Chain::new(2),
         };
 
         let checksummed = "0xd8dA6BF26964aF9D7eEd9e03E53415D37aA96045";
@@ -767,7 +767,7 @@ fn setup(
 
         cross_assets_1 = multi::CrossAsset {
             address: AddressType::Eth(eth_addr_bytes),
-            chain: multi::Chain::Ethereum,
+            chain: multi::Chain::new(1),
         };
     }
 

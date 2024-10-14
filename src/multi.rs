@@ -2,17 +2,25 @@ use crate::Error;
 use alloy_primitives::{
     keccak256, Address as EthAddress, Bytes as PrimBytes, FixedBytes, U256, U64,
 };
-use alloy_sol_types::sol;
-use alloy_sol_types::SolValue;
 
 use soroban_sdk::{contracttype, Address, Bytes, BytesN, Env, Vec};
 #[contracttype]
 #[derive(Clone, Debug, Eq, PartialEq, Copy)]
-pub enum Chain {
-    Stellar = 0,
-    Ethereum = 1,
-}
+// pub enum Chain {
+//     Stellar = 2,
+//     Ethereum = 1,
+// }
 
+pub struct Chain(u64);
+
+impl Chain {
+    pub fn new(value: u64) -> Self {
+        Chain(value)
+    }
+    pub fn as_u8(&self) -> u8 {
+        self.0 as u8
+    }
+}
 #[contracttype]
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub enum AddressType {

@@ -869,7 +869,8 @@ pub fn convert_cross_assets(
     }
 
     let convert_asset = |cross_asset: &multi::CrossAsset| -> Result<sol::AssetSol, Error> {
-        let chain_id = U256::from(cross_asset.chain as u8);
+        // let chain_id = U256::from(cross_asset.chain as u8);
+        let chain_id = U256::from(cross_asset.chain.as_u8());
 
         // Define zero addresses, note that we need +8Bytes for Bytes arrays.
         let zero_eth_address = EthAddress::from_slice(&[0u8; 20]);
