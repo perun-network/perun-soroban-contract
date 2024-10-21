@@ -41,7 +41,6 @@ sol! {
     struct StateSol {
         bytes32[] channelID;
         uint64 version;
-        uint256[] backends;
         AllocationSol outcome;
         bytes appData;
         bool isFinal;
@@ -58,14 +57,16 @@ sol! {
 
     struct AllocationSol {
         AssetSol[] assets;
+        uint256[] backends;
         // Outer dimension are assets, inner dimension are the participants.
         uint256[][] balances;
-        // SubAllocSol[] locked;
+        SubAllocSol[] locked;
     }
+    #[derive(Debug)]
 
     struct SubAllocSol {
         // ID is the channelID of the subchannel
-        bytes32 ID; // solhint-disable-line var-name-mixedcase
+        bytes32[] ID; // solhint-disable-line var-name-mixedcase
         // balances holds the total balance of the subchannel of every asset.
         uint256[] balances;
         // indexMap maps each sub-channel participant to a parent channel

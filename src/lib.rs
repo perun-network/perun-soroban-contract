@@ -23,9 +23,11 @@ use soroban_sdk::{
 mod ethsig;
 mod multi;
 mod sol;
-use alloy_primitives::{
-    address, keccak256, Address as EthAddress, Bytes as PrimBytes, FixedBytes, U256, U64,
-};
+use crate::multi::CrossAsset;
+use crate::sol::SubAllocSol;
+use alloy_primitives::{address, keccak256, Address as EthAddress, Bytes as PrimBytes, FixedBytes, U256, U64, U16};
+use soroban_sdk::xdr::WriteXdr;
+
 #[contracterror]
 #[derive(Copy, Clone, Debug, Eq, PartialEq, PartialOrd, Ord)]
 #[repr(u32)]
@@ -68,7 +70,7 @@ pub enum Error {
 pub struct Balances {
     /// token represents a channel's asset / currency. Currently this contract
     /// supports single-asset channels, but multi-asset support is possible.
-    tokens: multi::ChannelAsset,
+    tokens: Vec<CrossAsset>,
     pub bal_a: Vec<i128>,
     pub bal_b: Vec<i128>,
 }
@@ -87,7 +89,7 @@ pub struct Participant {
     pub cc_addr: BytesN<20>,
     /// pubkey is the participant's public key. The participant's signatures on channel
     /// states must be valid under this public key.
-    pub stellar_pubkey: multi::ChannelPubKey,
+    pub stellar_pubkey: BytesN<65>,
 }
 
 #[contracttype]
@@ -285,34 +287,13 @@ impl Adjudicator {
         let contract = env.current_contract_address();
         let tokens = &channel.state.balances.tokens;
 
-        match &tokens {
-            multi::ChannelAsset::Single(address) => {
-                let token_client = token::Client::new(&env, address);
-                if let Some(amt) = amount.get(0) {
+        for i in 0..tokens.len() {
+            let token = tokens.get(i).unwrap();
+            if token.eth_address == BytesN::<20>::from_array(&env, &[0u8; 20]) {
+                let token_client = token::Client::new(&env, &token.stellar_address);
+                if let Some(amt) = amount.get(i) {
                     if amt > 0 {
-                        token_client.transfer(&actor, &contract, &amt);
-                    }
-                }
-            }
-            multi::ChannelAsset::Multi(addresses) => {
-                for (i, address) in addresses.iter().enumerate() {
-                    let token_client = token::Client::new(&env, &address);
-                    if let Some(amt) = amount.get(i.try_into().unwrap()) {
-                        if amt > 0 {
-                            token_client.transfer(&actor, &contract, &amt);
-                        }
-                    }
-                }
-            }
-            multi::ChannelAsset::Cross(cross_assets) => {
-                for (i, cross_asset) in cross_assets.iter().enumerate() {
-                    if let multi::AddressType::Stellar(address) = &cross_asset.address {
-                        let token_client = token::Client::new(&env, address);
-                        if let Some(amt) = amount.get(i.try_into().unwrap()) {
-                            if amt > 0 {
-                                token_client.transfer(&actor, &contract, &amt);
-                            }
-                        }
+                        token_client.transfer(&actor, &contract, &amount.get(i).unwrap());
                     }
                 }
             }
@@ -325,9 +306,8 @@ impl Adjudicator {
     pub fn close(
         env: Env,
         state: State,
-        sig_a_stellar: BytesN<64>,
-        sig_b_stellar: BytesN<64>,
-        cross_chain: bool,
+        sig_a_stellar: BytesN<65>,
+        sig_b_stellar: BytesN<65>,
     ) -> Result<(), Error> {
         // checks
         // Only final states can be closed gracefully.
@@ -345,35 +325,20 @@ impl Adjudicator {
         // We verify both parties' signatures on the submitted final state.
         let message = state.clone().to_xdr(&env);
         let state_sol_prefix_hash =
-            hash_state_eth_prefixed(&env, &state).expect("hashing state eth style failed");
+            hash_state_eth_prefixed(&env, &state)?;
 
-        if cross_chain {
-            channel.params.a.stellar_pubkey.verify_signature_cross(
-                &env,
-                state_sol_prefix_hash,
-                &sig_a_stellar,
-            )?;
-            channel.params.b.stellar_pubkey.verify_signature_cross(
-                &env,
-                state_sol_prefix_hash,
-                &sig_b_stellar,
-            )?;
-        } else {
-            match &channel.params.a.stellar_pubkey {
-                multi::ChannelPubKey::Single(pubkey) => {
-                    env.crypto()
-                        .ed25519_verify(pubkey, &message, &sig_a_stellar);
-                }
-                multi::ChannelPubKey::Cross(_) => return Err(Error::InvalidPubKeyType),
-            }
-            match &channel.params.b.stellar_pubkey {
-                multi::ChannelPubKey::Single(pubkey) => {
-                    env.crypto()
-                        .ed25519_verify(pubkey, &message, &sig_b_stellar);
-                }
-                multi::ChannelPubKey::Cross(_) => return Err(Error::InvalidPubKeyType),
-            }
-        }
+        let pub_key_a = multi::ChannelPubKeyCross{key: channel.params.a.stellar_pubkey.clone()};
+        let pub_key_b = multi::ChannelPubKeyCross{key: channel.params.b.stellar_pubkey.clone()};
+        pub_key_a.verify_signature_cross(
+            &env,
+            state_sol_prefix_hash,
+            &sig_a_stellar,
+        )?;
+        pub_key_b.verify_signature_cross(
+            &env,
+            state_sol_prefix_hash,
+            &sig_b_stellar,
+        )?;
 
         // effects
         // Mark the channel as closed (to allow withdrawing).
@@ -452,9 +417,8 @@ impl Adjudicator {
     pub fn dispute(
         env: Env,
         new_state: State,
-        sig_a_stellar: BytesN<64>,
-        sig_b_stellar: BytesN<64>,
-        cross_chain: bool,
+        sig_a_stellar: BytesN<65>,
+        sig_b_stellar: BytesN<65>,
     ) -> Result<(), Error> {
         // checks
         let mut channel = find_valid_channel(&env, &new_state)?;
@@ -477,33 +441,18 @@ impl Adjudicator {
         let state_sol_prefix_hash =
             hash_state_eth_prefixed(&env, &new_state).expect("hashing state eth style failed");
 
-        if cross_chain {
-            channel.params.a.stellar_pubkey.verify_signature_cross(
-                &env,
-                state_sol_prefix_hash,
-                &sig_a_stellar,
-            )?;
-            channel.params.b.stellar_pubkey.verify_signature_cross(
-                &env,
-                state_sol_prefix_hash,
-                &sig_b_stellar,
-            )?;
-        } else {
-            match &channel.params.a.stellar_pubkey {
-                multi::ChannelPubKey::Single(pubkey) => {
-                    env.crypto()
-                        .ed25519_verify(pubkey, &message, &sig_a_stellar);
-                }
-                multi::ChannelPubKey::Cross(_) => return Err(Error::InvalidPubKeyType),
-            }
-            match &channel.params.b.stellar_pubkey {
-                multi::ChannelPubKey::Single(pubkey) => {
-                    env.crypto()
-                        .ed25519_verify(pubkey, &message, &sig_b_stellar);
-                }
-                multi::ChannelPubKey::Cross(_) => return Err(Error::InvalidPubKeyType),
-            }
-        }
+        let pub_key_a = multi::ChannelPubKeyCross{key: channel.params.a.stellar_pubkey.clone()};
+        let pub_key_b = multi::ChannelPubKeyCross{key: channel.params.b.stellar_pubkey.clone()};
+        pub_key_a.verify_signature_cross(
+            &env,
+            state_sol_prefix_hash,
+            &sig_a_stellar,
+        )?;
+        pub_key_b.verify_signature_cross(
+            &env,
+            state_sol_prefix_hash,
+            &sig_b_stellar,
+        )?;
 
         // effects
         // We set disputed to true and update the timestamp.
@@ -584,34 +533,13 @@ impl Adjudicator {
 
         let tokens = &channel.state.balances.tokens;
 
-        match &tokens {
-            multi::ChannelAsset::Single(address) => {
-                let token_client = token::Client::new(&env, address);
-                if let Some(amt) = amount.get(0) {
+        for i in 0..tokens.len() {
+            let token = &tokens.get(i).unwrap();
+            if token.eth_address == BytesN::<20>::from_array(&env, &[0u8; 20]) {
+                let token_client = token::Client::new(&env, &token.stellar_address);
+                if let Some(amt) = amount.get(i) {
                     if amt > 0 {
                         token_client.transfer(&contract, &actor, &amt);
-                    }
-                }
-            }
-            multi::ChannelAsset::Multi(addresses) => {
-                for (i, address) in addresses.iter().enumerate() {
-                    let token_client = token::Client::new(&env, &address);
-                    if let Some(amt) = amount.get(i.try_into().unwrap()) {
-                        if amt > 0 {
-                            token_client.transfer(&contract, &actor, &amt);
-                        }
-                    }
-                }
-            }
-            multi::ChannelAsset::Cross(cross_assets) => {
-                for (i, cross_asset) in cross_assets.iter().enumerate() {
-                    if let multi::AddressType::Stellar(address) = &cross_asset.address {
-                        let token_client = token::Client::new(&env, address);
-                        if let Some(amt) = amount.get(i.try_into().unwrap()) {
-                            if amt > 0 {
-                                token_client.transfer(&contract, &actor, &amt);
-                            }
-                        }
                     }
                 }
             }
@@ -667,34 +595,13 @@ impl Adjudicator {
         let contract = env.current_contract_address();
         let tokens = &channel.state.balances.tokens;
 
-        match &tokens {
-            multi::ChannelAsset::Single(address) => {
-                let token_client = token::Client::new(&env, address);
-                if let Some(amt) = amount.get(0) {
+        for i in 0..tokens.len() {
+            let token = &tokens.get(i).unwrap();
+            if token.eth_address == BytesN::<20>::from_array(&env, &[0u8; 20]) {
+                let token_client = token::Client::new(&env, &token.stellar_address);
+                if let Some(amt) = amount.get(i) {
                     if amt > 0 {
                         token_client.transfer(&contract, &actor, &amt);
-                    }
-                }
-            }
-            multi::ChannelAsset::Multi(addresses) => {
-                for (i, address) in addresses.iter().enumerate() {
-                    let token_client = token::Client::new(&env, &address);
-                    if let Some(amt) = amount.get(i.try_into().unwrap()) {
-                        if amt > 0 {
-                            token_client.transfer(&contract, &actor, &amt);
-                        }
-                    }
-                }
-            }
-            multi::ChannelAsset::Cross(cross_assets) => {
-                for (i, cross_asset) in cross_assets.iter().enumerate() {
-                    if let multi::AddressType::Stellar(address) = &cross_asset.address {
-                        let token_client = token::Client::new(&env, address);
-                        if let Some(amt) = amount.get(i.try_into().unwrap()) {
-                            if amt > 0 {
-                                token_client.transfer(&contract, &actor, &amt);
-                            }
-                        }
                     }
                 }
             }
@@ -852,50 +759,45 @@ pub fn is_timelock_expired(env: &Env, channel: &Channel) -> bool {
     return channel.control.timestamp + channel.params.challenge_duration <= current_time;
 }
 
-pub fn get_cross_assets(e: &Env, state: &State) -> Result<Vec<multi::CrossAsset>, Error> {
-    match &state.balances.tokens {
-        multi::ChannelAsset::Cross(cross_assets) => Ok(cross_assets.clone()),
-        multi::ChannelAsset::Single(_) => Err(Error::ConversionError),
-        multi::ChannelAsset::Multi(_) => Err(Error::ConversionError),
-    }
+pub fn get_assets(e: &Env, state: &State) -> Result<Vec<CrossAsset>, Error> {
+    Ok(state.balances.tokens.clone())
 }
 
 pub fn convert_cross_assets(
     e: &Env,
-    cross_assets: &Vec<multi::CrossAsset>,
+    cross_assets: &Vec<CrossAsset>, // Ensure this is your CrossAsset struct
 ) -> Result<(sol::AssetSol, sol::AssetSol), Error> {
     if cross_assets.len() != 2 {
         return Err(Error::ConversionError);
     }
 
-    let convert_asset = |cross_asset: &multi::CrossAsset| -> Result<sol::AssetSol, Error> {
-        // let chain_id = U256::from(cross_asset.chain as u8);
+    let convert_asset = |cross_asset: &CrossAsset| -> Result<sol::AssetSol, Error> {
         let chain_id = U256::from(cross_asset.chain.as_u8());
 
-        // Define zero addresses, note that we need +8Bytes for Bytes arrays.
+        // Define zero addresses
         let zero_eth_address = EthAddress::from_slice(&[0u8; 20]);
         let zero_stellar_address = PrimBytes::copy_from_slice(&[0u8; 40]);
 
-        let (eth_holder, cc_holder) = match &cross_asset.address {
-            multi::AddressType::Eth(eth_address) => {
-                // Handle Ethereum address
-                let mut eth_addr_slice = [0u8; 20];
-                eth_address.copy_into_slice(&mut eth_addr_slice);
+        // Extract addresses from the CrossAsset
+        let eth_address = &cross_asset.eth_address;
+        let stellar_address = &cross_asset.stellar_address;
 
-                let eth_addr_sol = EthAddress::from_slice(&eth_addr_slice);
+        // Create the holders based on the presence of addresses
+        let (eth_holder, cc_holder) = if stellar_address.to_xdr(e).iter().all(|byte| byte == 0u8) {
+            // If there's a valid Ethereum address, use it
+            let mut eth_addr_slice = [0u8; 20];
+            eth_address.copy_into_slice(&mut eth_addr_slice);
+            let eth_addr_sol = EthAddress::from_slice(&eth_addr_slice);
+            (eth_addr_sol, zero_stellar_address) // Set Stellar holder to zero
+        } else {
+            let cc_holder_xdr = stellar_address.to_xdr(e);
 
-                (eth_addr_sol, zero_stellar_address)
-            }
-            multi::AddressType::Stellar(stellar_address) => {
-                // Handle Stellar address
-                let cc_holder_xdr = stellar_address.to_xdr(e);
-                let mut cc_holder_slice = [0u8; 40];
-                cc_holder_xdr.copy_into_slice(&mut cc_holder_slice);
+            let mut cc_holder_slice = [0u8; 40];
+            cc_holder_xdr.copy_into_slice(&mut cc_holder_slice);
+            let stripped_cc_holder_slice = &cc_holder_slice[8..];
 
-                let cc_holder_sol = PrimBytes::copy_from_slice(&cc_holder_slice);
-
-                (zero_eth_address, cc_holder_sol)
-            }
+            let cc_holder_sol = PrimBytes::copy_from_slice(&stripped_cc_holder_slice);
+            (zero_eth_address, cc_holder_sol)
         };
 
         Ok(sol::AssetSol {
@@ -911,12 +813,46 @@ pub fn convert_cross_assets(
     Ok((asset_0, asset_1))
 }
 
+
 pub fn convert_allocation(e: &Env, state: &State) -> Result<sol::AllocationSol, Error> {
     // Ensure that there are exactly two cross-chain assets
-    let cross_assets = match &state.balances.tokens {
-        multi::ChannelAsset::Cross(cross_assets) if cross_assets.len() == 2 => cross_assets.clone(),
-        _ => return Err(Error::ConversionError),
-    };
+    let cross_assets =  &state.balances.tokens;
+    // Determine backends based on the address types in cross_assets
+    let backends: [U256; 2] = [
+        {
+            let mut eth_addr_slice = [0u8; 20];
+            cross_assets.get_unchecked(0).eth_address.copy_into_slice(&mut eth_addr_slice);
+
+            // Check if the Ethereum address is non-zero
+            if eth_addr_slice != [0u8; 20] {
+                U256::from(1) // Ethereum
+            } else {
+                // Check if Stellar address is non-zero
+                let stellar_addr_xdr = cross_assets.get_unchecked(0).stellar_address.to_xdr(&e);
+                if stellar_addr_xdr.iter().all(|byte| byte == 0u8) {
+                    U256::from(1)
+                } else {
+                    U256::from(2)
+                }
+            }
+        },
+        {
+            let mut eth_addr_slice = [0u8; 20];
+            cross_assets.get_unchecked(1).eth_address.copy_into_slice(&mut eth_addr_slice);
+
+            if eth_addr_slice != [0u8; 20] {
+                U256::from(1) // Ethereum
+            } else {
+                // Check Stellar address
+                let stellar_addr_xdr = cross_assets.get_unchecked(1).stellar_address.to_xdr(&e);
+                if stellar_addr_xdr.iter().all(|byte| byte == 0u8) {
+                    U256::from(1)
+                } else {
+                    U256::from(2)
+                }
+            }
+        },
+    ];
 
     // Use convert_cross_assets to convert both assets
     let (asset_sol_0, asset_sol_1) = convert_cross_assets(e, &cross_assets)?;
@@ -929,13 +865,13 @@ pub fn convert_allocation(e: &Env, state: &State) -> Result<sol::AllocationSol, 
 
     // Construct the AllocationSol with the vectors
     Ok(sol::AllocationSol {
-        assets: [asset_sol_0, asset_sol_1].to_vec(),
+        assets: [asset_sol_0, asset_sol_1].to_vec(), // Directly convert to a vector
+        backends: backends.to_vec(),
         balances: [
             [bals_cc_a, bals_cc_b].to_vec(),
             [bals_stellar_a, bals_stellar_b].to_vec(),
-        ]
-        .to_vec(),
-        // locked: vec![e], // Assuming this is handled elsewhere or not needed
+        ].to_vec(),
+        locked: [].to_vec(),
     })
 }
 
@@ -962,35 +898,15 @@ pub fn convert_state(e: &Env, state: &State) -> Result<sol::StateSol, Error> {
     let channel_id_alloy_0 = FixedBytes::from_slice(&channel_id_slice_0);
     let channel_id_alloy_1 = FixedBytes::from_slice(&channel_id_slice_1);
     let channel_id_vec = [channel_id_alloy_0, channel_id_alloy_1].to_vec();
-    let app_data_alloy = PrimBytes::copy_from_slice(&[0u8; 40]);
+    let app_data_alloy = PrimBytes::copy_from_slice(&[]);
     let is_final_alloy = state.finalized;
 
     let outcome = convert_allocation(e, state)?;
 
     // 1 for Ethereum, 2 for Stellar
-
-    let backends: [U256; 2] = match &state.balances.tokens {
-        multi::ChannelAsset::Cross(cross_assets) => {
-            [
-                match cross_assets.get(0).map(|asset| asset.address) {
-                    Some(multi::AddressType::Eth(_)) => U256::from(1), // 1 for Ethereum
-                    Some(multi::AddressType::Stellar(_)) => U256::from(2), // 2 for Stellar
-                    _ => return Err(Error::InvalidAddressType),
-                },
-                match cross_assets.get(1).map(|asset| asset.address) {
-                    Some(multi::AddressType::Eth(_)) => U256::from(1),
-                    Some(multi::AddressType::Stellar(_)) => U256::from(2),
-                    _ => return Err(Error::InvalidAddressType),
-                },
-            ]
-        }
-        multi::ChannelAsset::Single(_) => return Err(Error::WrongChannelTypeErr), //[U256::from(2), U256::from(2)], // Assuming Single is always Stellar
-        multi::ChannelAsset::Multi(_) => return Err(Error::WrongChannelTypeErr), //[U256::from(2), U256::from(2)], // Assuming Multi only contains Stellar addresses
-    };
     Ok(sol::StateSol {
         channelID: channel_id_vec,
         version: state.version,
-        backends: backends.to_vec(),
         outcome,
         appData: app_data_alloy,
         isFinal: is_final_alloy,
