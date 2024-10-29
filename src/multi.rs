@@ -17,8 +17,8 @@ impl Chain {
     pub fn new(value: u64) -> Self {
         Chain(value)
     }
-    pub fn as_u8(&self) -> u8 {
-        self.0 as u8
+    pub fn as_u64(&self) -> u64 {  // Use `u64` here to avoid data loss
+        self.0
     }
 }
 #[contracttype]
