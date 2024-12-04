@@ -1,4 +1,4 @@
-// Copyright 2024 - See NOTICE file for copyright holders.
+// Copyright 2023 - See NOTICE file for copyright holders.
 //
 // Licensed under the Apache License, Version 2.0 (the "License");
 // you may not use this file except in compliance with the License.
@@ -157,6 +157,7 @@ fn test_signature_verification_k256() {
 fn test_honest_payment_cross_sameasset() {
     let env = Env::default();
     let mut bal_a = vec![&env];
+    let one_withdrawer = false;
 
     let bal_contract_after_afund = vec![&env, 100, 150];
     let bal_contract_after_bfund = vec![&env, 300, 400];
@@ -220,11 +221,11 @@ fn test_honest_payment_cross_sameasset() {
     t.verify_state(&t.state, &stellar_channel_id);
     t.verify_bal_contract(bal_contract_after_final);
 
-    t.client.withdraw(&stellar_channel_id, &A);
+    t.client.withdraw(&stellar_channel_id, &A, &one_withdrawer);
     t.verify_bal_a(bal_a_after_awdraw);
     t.verify_bal_contract(bal_contract_after_awdraw);
 
-    t.client.withdraw(&stellar_channel_id, &B);
+    t.client.withdraw(&stellar_channel_id, &B, &one_withdrawer);
     t.verify_bal_b(bal_b_after_bwdraw);
     t.verify_bal_contract(bal_contract_after_bwdraw);
 }
@@ -233,6 +234,7 @@ fn test_honest_payment_cross_sameasset() {
 fn test_honest_payment_cross_mixedssets() {
     let env = Env::default();
     let mut bal_a = vec![&env];
+    let one_withdrawer = false;
 
     let bal_contract_after_afund = vec![&env, 100, 150];
     let bal_contract_after_bfund = vec![&env, 300, 400];
@@ -281,11 +283,11 @@ fn test_honest_payment_cross_mixedssets() {
     t.verify_state(&t.state, &stellar_channel_id);
     t.verify_bal_contract(bal_contract_after_final);
 
-    t.client.withdraw(&stellar_channel_id, &A);
+    t.client.withdraw(&stellar_channel_id, &A, &one_withdrawer);
     t.verify_bal_a(bal_a_after_awdraw);
     t.verify_bal_contract(bal_contract_after_awdraw);
 
-    t.client.withdraw(&stellar_channel_id, &B);
+    t.client.withdraw(&stellar_channel_id, &B, &one_withdrawer);
     t.verify_bal_b(bal_b_after_bwdraw);
     t.verify_bal_contract(bal_contract_after_bwdraw);
 }
@@ -357,6 +359,7 @@ fn test_funding_abort_cross_mixedassets() {
 fn test_dispute_cross_sameasset() {
     let env = Env::default();
     let cross_chain = true;
+    let one_withdrawer = false;
 
     let bal_contract_after_afund = vec![&env, 100, 150];
     let bal_contract_after_bfund = vec![&env, 300, 400];
@@ -404,11 +407,11 @@ fn test_dispute_cross_sameasset() {
     t.verify_state(&t.state, &stellar_channel_id);
     t.verify_bal_contract(bal_contract_after_fclose);
 
-    t.client.withdraw(&t.channel_id, &A);
+    t.client.withdraw(&t.channel_id, &A, &one_withdrawer);
     t.verify_bal_a(bal_a_after_wdraw);
     t.verify_bal_contract(bal_contract_after_awdraw);
 
-    t.client.withdraw(&t.channel_id, &B);
+    t.client.withdraw(&t.channel_id, &B, &one_withdrawer);
     t.verify_bal_b(bal_b_after_wdraw);
     t.verify_bal_contract(bal_contract_after_bwdraw);
 }
@@ -416,6 +419,7 @@ fn test_dispute_cross_sameasset() {
 #[test]
 fn test_dispute_cross_mixedassets() {
     let env = Env::default();
+    let one_withdrawer = false;
     let cross_chain = true;
     let mixed_assets = true;
     let bal_contract_after_afund = vec![&env, 100, 150];
@@ -463,17 +467,18 @@ fn test_dispute_cross_mixedassets() {
     t.verify_state(&t.state, &stellar_channel_id);
     t.verify_bal_contract(bal_contract_after_fclose);
 
-    t.client.withdraw(&t.channel_id, &A);
+    t.client.withdraw(&t.channel_id, &A, &one_withdrawer);
     t.verify_bal_a(bal_a_after_wdraw);
     t.verify_bal_contract(bal_contract_after_awdraw);
 
-    t.client.withdraw(&t.channel_id, &B);
+    t.client.withdraw(&t.channel_id, &B, &one_withdrawer);
     t.verify_bal_b(bal_b_after_wdraw);
     t.verify_bal_contract(bal_contract_after_bwdraw);
 }
 
 #[test]
 fn test_malicious_dispute() {
+    let one_withdrawer = false;
     let env = Env::default();
     let cross_chain = true;
     let bal_a = vec![&env, 100, 150];
@@ -538,11 +543,11 @@ fn test_malicious_dispute() {
     t.verify_state(&t.state, &stellar_channel_id);
     t.verify_bal_contract(bal_contract_after_fclose);
 
-    t.client.withdraw(&stellar_channel_id, &A);
+    t.client.withdraw(&stellar_channel_id, &A, &one_withdrawer);
     t.verify_bal_a(bal_a_after_fwdraw);
     t.verify_bal_contract(bal_contract_after_awdraw);
 
-    t.client.withdraw(&stellar_channel_id, &B);
+    t.client.withdraw(&stellar_channel_id, &B, &one_withdrawer);
     t.verify_bal_b(bal_b_after_fwdraw);
     t.verify_bal_contract(bal_contract_after_bwdraw);
 }

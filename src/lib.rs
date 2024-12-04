@@ -66,7 +66,7 @@ pub enum Error {
 
 #[contracttype]
 #[derive(Clone, Debug, Eq, PartialEq)]
-// / Balances represent a channel state's balance distribution
+/// Balances represent a channel state's balance distribution
 pub struct Balances {
     /// token represents a channel's asset / currency. Currently this contract
     /// supports single-asset channels, but multi-asset support is possible.
@@ -82,6 +82,8 @@ pub enum ChannelID {
 
 #[contracttype]
 #[derive(Clone, Debug, Eq, PartialEq)]
+/// Participant represents a participant in the channel.
+/// All channels have two participants.
 pub struct Participant {
     /// addr represents the participant's on-chain address.
     /// The participant receives payments on this address.
@@ -202,7 +204,6 @@ impl Adjudicator {
             // We directly consider a channel to be funded by a party, if their balance is 0
             funded_a: false,
             funded_b: false,
-
             // channels are not closed, withdrawn from or disputed initially.
             closed: false,
             withdrawn_a: false,
@@ -247,6 +248,10 @@ impl Adjudicator {
                 // Note that the transaction is rolled back, if funding fails at a later point,
                 // so doing this now is not a problem.
                 channel.control.funded_a = true; // effect
+                let other_funded = get_funded(&env, channel.state.balances.tokens.clone(), channel.state.balances.bal_b.clone());
+                if other_funded {
+                    channel.control.funded_b = true;
+                }
                 (
                     channel.params.a.stellar_addr.clone(),
                     channel.state.balances.bal_a.clone(),
@@ -258,6 +263,10 @@ impl Adjudicator {
                     return Err(Error::AlreadyFunded);
                 }
                 channel.control.funded_b = true; // effect
+                let other_funded = get_funded(&env, channel.state.balances.tokens.clone(), channel.state.balances.bal_a.clone());
+                if other_funded {
+                    channel.control.funded_a = true;
+                }
                 (
                     channel.params.b.stellar_addr.clone(),
                     channel.state.balances.bal_b.clone(),
@@ -331,12 +340,12 @@ impl Adjudicator {
         let pub_key_b = multi::ChannelPubKeyCross{key: channel.params.b.stellar_pubkey.clone()};
         pub_key_a.verify_signature_cross(
             &env,
-            state_sol_prefix_hash,
+            state_sol_prefix_hash.clone(),
             &sig_a_stellar,
         )?;
         pub_key_b.verify_signature_cross(
             &env,
-            state_sol_prefix_hash,
+            state_sol_prefix_hash.clone(),
             &sig_b_stellar,
         )?;
 
@@ -445,12 +454,12 @@ impl Adjudicator {
         let pub_key_b = multi::ChannelPubKeyCross{key: channel.params.b.stellar_pubkey.clone()};
         pub_key_a.verify_signature_cross(
             &env,
-            state_sol_prefix_hash,
+            state_sol_prefix_hash.clone(),
             &sig_a_stellar,
         )?;
         pub_key_b.verify_signature_cross(
             &env,
-            state_sol_prefix_hash,
+            state_sol_prefix_hash.clone(),
             &sig_b_stellar,
         )?;
 
@@ -477,37 +486,54 @@ impl Adjudicator {
     /// withdraw is used to withdraw a party's balance from a closed channel.
     /// If the party_idx is false, withdraw is executed on behalf ob party A, else on behalf
     /// of party B.
-    pub fn withdraw(env: Env, channel_id: BytesN<32>, party_idx: bool) -> Result<(), Error> {
-        // checks
+    pub fn withdraw(
+        env: Env,
+        channel_id: BytesN<32>,
+        party_idx: bool,
+        one_withdrawer: bool,
+    ) -> Result<(), Error> {
+        // Retrieve the channel from storage
         let mut channel = get_channel(&env, &channel_id).ok_or(Error::ChannelNotFound)?;
+
         // Verify that the channel is closed.
         if !channel.control.closed {
             return Err(Error::WithdrawOnOpenChannel);
         }
-        let (actor, amount) = match party_idx {
+
+        // Determine the amount to withdraw based on party_idx
+        let (amount, receiver) = match party_idx {
             A => {
-                // We verify that A has not yet withdrawn (or 0 balance).
                 if channel.control.withdrawn_a {
                     return Err(Error::AlreadyFunded);
                 }
-                // We mark that A has now withdrawn.
-                channel.control.withdrawn_a = true; // effect
+
                 (
-                    channel.params.a.stellar_addr.clone(),
                     channel.state.balances.bal_a.clone(),
+                    channel.params.a.stellar_addr.clone(),
                 )
             }
             B => {
                 if channel.control.withdrawn_b {
                     return Err(Error::AlreadyFunded);
                 }
-                channel.control.withdrawn_b = true; // effect
                 (
-                    channel.params.b.stellar_addr.clone(),
                     channel.state.balances.bal_b.clone(),
+                    channel.params.b.stellar_addr.clone(),
                 )
             }
         };
+
+        // Always authenticate as party B if oneWithdrawer is true
+        let actor = if one_withdrawer {
+            channel.params.b.stellar_addr.clone()
+        } else {
+            match party_idx {
+                A => channel.params.a.stellar_addr.clone(),
+                B => channel.params.b.stellar_addr.clone(),
+            }
+        };
+
+        // Perform the authentication
         actor.require_auth();
 
         // Emit a withdraw event with the party index.
@@ -516,19 +542,7 @@ impl Adjudicator {
             (channel.clone(), party_idx),
         );
 
-        // effects
-        if is_withdrawn(&channel) {
-            // If the channel is withdrawn completely, emit an according event and delete it.
-            env.events().publish(
-                (symbol_short!("perun"), symbol_short!("pay_c")),
-                channel.clone(),
-            );
-            delete_channel(&env, &channel_id);
-        } else {
-            set_channel(&env, &channel, &channel_id);
-        }
-
-        // interact
+        // Perform the token transfers
         let contract = env.current_contract_address();
 
         let tokens = &channel.state.balances.tokens;
@@ -539,10 +553,28 @@ impl Adjudicator {
                 let token_client = token::Client::new(&env, &token.stellar_address);
                 if let Some(amt) = amount.get(i) {
                     if amt > 0 {
-                        token_client.transfer(&contract, &actor, &amt);
+                        token_client.transfer(&contract, &receiver, &amt);
                     }
                 }
             }
+        }
+
+        // Mark the appropriate party's withdrawal as complete
+        match party_idx {
+            A => channel.control.withdrawn_a = true,
+            B => channel.control.withdrawn_b = true,
+        }
+
+        // Handle channel state post-withdrawal
+        if is_withdrawn(&channel) {
+            // If the channel is completely withdrawn, emit a corresponding event and delete it.
+            env.events().publish(
+                (symbol_short!("perun"), symbol_short!("pay_c")),
+                channel.clone(),
+            );
+            delete_channel(&env, &channel_id);
+        } else {
+            set_channel(&env, &channel, &channel_id);
         }
 
         Ok(())
@@ -923,6 +955,22 @@ pub fn hash_state_eth_prefixed(e: &Env, state: &State) -> Result<FixedBytes<32>,
 
     let state_sol_prefix_hash = keccak256(&prefix_hash);
     Ok(state_sol_prefix_hash)
+}
+
+/// get_funded looks if other party has to fund
+fn get_funded(env: &Env, tokens: Vec<CrossAsset>, amount: Vec<i128>) -> bool {
+    let mut funded = true;
+    for i in 0..tokens.len() {
+        let token = tokens.get(i).unwrap();
+        if token.chain == multi::Chain::new(2) {
+            if let Some(amt) = amount.get(i) {
+                if amt > 0 {
+                    funded = false
+                }
+            }
+        }
+    }
+    return funded
 }
 
 #[cfg(test)]
