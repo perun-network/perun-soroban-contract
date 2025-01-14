@@ -181,24 +181,18 @@ fn test_honest_payment_cross_sameasset() {
     let mixed_assets = false;
 
     let mut t = setup(&env, 10, bal_a, bal_b, true, cross_chain, mixed_assets);
-    let stellar_channel_id = t.state.channel_id.get_unchecked(0);
+    let stellar_channel_id = t.state.channel_id.clone();
 
     // We verify that the new state is signed by both parties.
     let message = t.params.clone().to_xdr(&env);
 
     let state_sol_prefix_hash =
         hash_state_eth_prefixed(&env, &t.state).expect("hashing state eth style failed");
-    // println!("Encoded State: {:?}", state_sol_prefix_hash);
     let state_sol_prefix_hash = state_sol_prefix_hash.to_vec();
 
-    // println!("Byte Vector: {:?}", state_sol_prefix_hash);
     t.client.open(&t.params, &t.state);
-    // println!("Params: {:?}", t.params);
-    // println!("State: {:?}", t.state);
     let sig_a_stellar = t.sigs_ccabi_a();
     let sig_b_stellar = t.sigs_ccabi_b();
-    // println!("SigA: {:?}", sig_a_stellar);
-    // println!("SigB: {:?}", sig_b_stellar);
     t.verify_state(&t.state, &stellar_channel_id);
 
     t.client.fund(&stellar_channel_id, &A);
@@ -258,7 +252,7 @@ fn test_honest_payment_cross_mixedssets() {
     let mixed_assets = true;
 
     let mut t = setup(&env, 10, bal_a, bal_b, true, cross_chain, mixed_assets);
-    let stellar_channel_id = t.state.channel_id.get_unchecked(0);
+    let stellar_channel_id = t.state.channel_id.clone();
 
     t.client.open(&t.params, &t.state);
     t.verify_state(&t.state, &stellar_channel_id);
@@ -277,7 +271,6 @@ fn test_honest_payment_cross_mixedssets() {
 
     let sig_a_stellar = t.sigs_ccabi_a();
     let sig_b_stellar = t.sigs_ccabi_b();
-
     t.client
         .close(&t.state, &sig_a_stellar, &sig_b_stellar);
     t.verify_state(&t.state, &stellar_channel_id);
@@ -309,7 +302,7 @@ fn test_funding_abort_cross_sameasset() {
 
     let t = setup(&env, 10, bal_a, bal_b, true, cross_chain, false);
 
-    let stellar_channel_id = t.state.channel_id.get_unchecked(0);
+    let stellar_channel_id = t.state.channel_id.clone();
 
     t.client.open(&t.params, &t.state);
     t.verify_state(&t.state, &stellar_channel_id);
@@ -341,7 +334,7 @@ fn test_funding_abort_cross_mixedassets() {
 
     let t = setup(&env, 10, bal_a, bal_b, true, cross_chain, mixed_assets);
 
-    let stellar_channel_id = t.state.channel_id.get_unchecked(0);
+    let stellar_channel_id = t.state.channel_id.clone();
 
     t.client.open(&t.params, &t.state);
     t.verify_state(&t.state, &stellar_channel_id);
@@ -377,16 +370,16 @@ fn test_dispute_cross_sameasset() {
     let bal_contract_after_bwdraw = vec![&env, 0, 0];
     let mut t = setup(&env, 10, bal_a, bal_b, true, cross_chain, false);
 
-    let stellar_channel_id = t.state.channel_id.get_unchecked(0);
+    let stellar_channel_id = t.state.channel_id.clone();
 
     t.client.open(&t.params, &t.state);
     t.verify_state(&t.state, &stellar_channel_id);
 
-    t.client.fund(&t.state.channel_id.get_unchecked(0), &A);
+    t.client.fund(&t.state.channel_id, &A);
     t.verify_bal_contract(bal_contract_after_afund);
     t.verify_bal_a(bal_a_after_afund);
 
-    t.client.fund(&t.state.channel_id.get_unchecked(0), &B);
+    t.client.fund(&t.state.channel_id, &B);
     t.verify_bal_contract(bal_contract_after_bfund);
     t.verify_bal_b(bal_b_after_bfund);
 
@@ -438,16 +431,16 @@ fn test_dispute_cross_mixedassets() {
     let bal_contract_after_bwdraw = vec![&env, 0, 0];
     let mut t = setup(&env, 10, bal_a, bal_b, true, cross_chain, mixed_assets);
 
-    let stellar_channel_id = t.state.channel_id.get_unchecked(0);
+    let stellar_channel_id = t.state.channel_id.clone();
 
     t.client.open(&t.params, &t.state);
     t.verify_state(&t.state, &stellar_channel_id);
 
-    t.client.fund(&t.state.channel_id.get_unchecked(0), &A);
+    t.client.fund(&t.state.channel_id, &A);
     t.verify_bal_contract(bal_contract_after_afund);
     t.verify_bal_a(bal_a_after_afund);
 
-    t.client.fund(&t.state.channel_id.get_unchecked(0), &B);
+    t.client.fund(&t.state.channel_id, &B);
     t.verify_bal_contract(bal_contract_after_bfund);
     t.verify_bal_b(bal_b_after_bfund);
 
@@ -500,7 +493,7 @@ fn test_malicious_dispute() {
     let to_send_bal_second = vec![&env, 0, 100];
     let mut t = setup(&env, 10, bal_a, bal_b, true, cross_chain, false);
 
-    let stellar_channel_id = t.state.channel_id.get_unchecked(0);
+    let stellar_channel_id = t.state.channel_id.clone();
 
     t.client.open(&t.params, &t.state);
     t.verify_state(&t.state, &stellar_channel_id);
@@ -751,16 +744,14 @@ fn setup(
         challenge_duration: challenge_duration,
     };
 
-    let channel_id = get_channel_id(&e, &params);
-
-    let chan_ids = vec![&e, channel_id.clone(), channel_id.clone()];
+    let channel_id = get_channel_id_cross(&e, &params);
 
     let state = State {
-        channel_id: chan_ids,
+        channel_id: channel_id.clone(),
         balances: Balances {
             tokens: vec![&e, cross_assets_0, cross_assets_1], //vec![&e, cross_assets_1, cross_assets_2]
-            bal_a: bal_a,
-            bal_b: bal_b,
+            bal_a,
+            bal_b,
         },
         version: 0,
         finalized: false,
