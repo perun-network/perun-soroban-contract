@@ -1,4 +1,4 @@
-// Copyright 2024 - See NOTICE file for copyright holders.
+// Copyright 2025 - See NOTICE file for copyright holders.
 //
 // Licensed under the Apache License, Version 2.0 (the "License");
 // you may not use this file except in compliance with the License.
@@ -298,7 +298,7 @@ impl Adjudicator {
 
         for i in 0..tokens.len() {
             let token = tokens.get(i).unwrap();
-            if token.eth_address == BytesN::<20>::from_array(&env, &[0u8; 20]) {
+            if token.chain == multi::Chain::new(2) {
                 let token_client = token::Client::new(&env, &token.stellar_address);
                 if let Some(amt) = amount.get(i) {
                     if amt > 0 {
@@ -546,7 +546,7 @@ impl Adjudicator {
 
         for i in 0..tokens.len() {
             let token = &tokens.get(i).unwrap();
-            if token.eth_address == BytesN::<20>::from_array(&env, &[0u8; 20]) {
+            if token.chain == multi::Chain::new(2) {
                 let token_client = token::Client::new(&env, &token.stellar_address);
                 if let Some(amt) = amount.get(i) {
                     if amt > 0 {
@@ -558,8 +558,20 @@ impl Adjudicator {
 
         // Mark the appropriate party's withdrawal as complete
         match party_idx {
-            A => channel.control.withdrawn_a = true,
-            B => channel.control.withdrawn_b = true,
+            A => {
+                channel.control.withdrawn_a = true;
+                let b_withdrawn = get_withdrawn(&env, channel.state.balances.tokens.clone(), channel.state.balances.bal_b.clone());
+                if b_withdrawn {
+                    channel.control.withdrawn_b = true;
+                }
+            },
+            B => {
+                channel.control.withdrawn_b = true;
+                let a_withdrawn = get_withdrawn(&env, channel.state.balances.tokens.clone(), channel.state.balances.bal_a.clone());
+                if a_withdrawn {
+                    channel.control.withdrawn_a = true;
+                }
+            },
         }
 
         // Handle channel state post-withdrawal
@@ -626,7 +638,7 @@ impl Adjudicator {
 
         for i in 0..tokens.len() {
             let token = &tokens.get(i).unwrap();
-            if token.eth_address == BytesN::<20>::from_array(&env, &[0u8; 20]) {
+            if token.chain == multi::Chain::new(2) {
                 let token_client = token::Client::new(&env, &token.stellar_address);
                 if let Some(amt) = amount.get(i) {
                     if amt > 0 {
@@ -896,6 +908,22 @@ fn get_funded(env: &Env, tokens: Vec<CrossAsset>, amount: Vec<i128>) -> bool {
         }
     }
     return funded
+}
+
+/// get_withdrawn looks if other party has to withdraw
+fn get_withdrawn(env: &Env, tokens: Vec<CrossAsset>, amount: Vec<i128>) -> bool {
+    let mut withdrawn = true;
+    for i in 0..tokens.len() {
+        let token = tokens.get(i).unwrap();
+        if token.chain == multi::Chain::new(2) {
+            if let Some(amt) = amount.get(i) {
+                if amt > 0 {
+                    withdrawn = false
+                }
+            }
+        }
+    }
+    return withdrawn
 }
 
 #[cfg(test)]
