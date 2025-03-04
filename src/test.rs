@@ -1,4 +1,4 @@
-// Copyright 2023 - See NOTICE file for copyright holders.
+// Copyright 2024 - See NOTICE file for copyright holders.
 //
 // Licensed under the Apache License, Version 2.0 (the "License");
 // you may not use this file except in compliance with the License.
@@ -206,6 +206,7 @@ fn test_honest_payment_cross_sameasset() {
     t.verify_bal_a(bal_a_after_afund);
 
     t.client.fund(&stellar_channel_id, &B);
+
     t.verify_bal_contract(bal_contract_after_bfund);
     t.verify_bal_b(bal_b_after_bfund);
 
@@ -436,6 +437,7 @@ fn test_dispute_cross_mixedassets() {
     let bal_contract_after_fclose = vec![&env, 300, 400];
     let bal_contract_after_awdraw = vec![&env, 200, 200];
     let bal_contract_after_bwdraw = vec![&env, 0, 0];
+
     let mut t = setup(&env, 10, bal_a, bal_b, true, cross_chain, mixed_assets);
 
     let stellar_channel_id = t.state.channel_id.get_unchecked(0);
@@ -464,6 +466,7 @@ fn test_dispute_cross_mixedassets() {
     );
 
     t.client.force_close(&t.channel_id);
+
     t.verify_state(&t.state, &stellar_channel_id);
     t.verify_bal_contract(bal_contract_after_fclose);
 
@@ -481,6 +484,7 @@ fn test_malicious_dispute() {
     let one_withdrawer = false;
     let env = Env::default();
     let cross_chain = true;
+
     let bal_a = vec![&env, 100, 150];
     let bal_b = vec![&env, 200, 250];
 

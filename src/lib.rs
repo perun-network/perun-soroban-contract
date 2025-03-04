@@ -204,6 +204,7 @@ impl Adjudicator {
             // We directly consider a channel to be funded by a party, if their balance is 0
             funded_a: false,
             funded_b: false,
+
             // channels are not closed, withdrawn from or disputed initially.
             closed: false,
             withdrawn_a: false,
@@ -749,6 +750,7 @@ pub fn is_valid_state_transition(old: &State, new: &State) -> bool {
             return false;
         }
     }
+
     return true;
 }
 
