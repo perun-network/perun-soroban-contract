@@ -12,29 +12,28 @@ env:
 jobs:
   test:
     runs-on: ubuntu-latest
-
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/cache@v3
-        with:
-          path: |
-            ~/.cargo/registry
-            ~/.cargo/git
-            target
-            tests/target
-          key: ${{ runner.os }}-cargo-${{ hashFiles('**/Cargo.lock') }}
-      - name: Install Dependencies
+      - name: Checkout Repository
+        uses: actions/checkout@v4
+
+      - name: Force Stable Rust
         run: |
+          rustup override unset
           rustup update stable
           rustup default stable
+          rustup show
+
+      - name: Debug Rust Toolchain
+        run: |
+          rustc --version --verbose
+          rustup show
+
+      - name: Install Dependencies
+        run: |
           rustup component add rust-src rustfmt clippy
           rustup target add wasm32-unknown-unknown
-      - name: Install Rust Toolchain
-        uses: dtolnay/rust-toolchain@stable
-        with:
-          toolchain: 1.78.0
 
-      - name: Clean build
+      - name: Clean Cargo Cache (Force Rebuild)
         run: |
           cargo clean
           rm -rf ~/.cargo/registry ~/.cargo/git
