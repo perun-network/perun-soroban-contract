@@ -13,7 +13,6 @@
 // limitations under the License.
 #![cfg(test)]
 pub mod ethsig {
-    pub use k256::ecdsa::Error;
     use k256::{
         ecdsa::{
             recoverable,
@@ -57,29 +56,11 @@ pub mod ethsig {
     }
 
     impl EthSigner {
-        pub fn new<R: rand::Rng + rand::CryptoRng>(rng: &mut R) -> Self {
-            let skey = SigningKey::random(rng);
-            let addr = skey.verifying_key().into();
-            let pubkey = skey.verifying_key();
-            Self { skey, pubkey, addr }
-        }
 
         pub fn init_from_key(skey: SigningKey) -> Self {
             let addr = skey.verifying_key().into();
             let pubkey = skey.verifying_key();
             Self { skey, pubkey, addr }
-        }
-
-        pub fn get_key(&self) -> &SigningKey {
-            &self.skey
-        }
-
-        pub fn address(&self) -> EthAddress {
-            self.addr
-        }
-
-        pub fn verifying_key(&self) -> VerifyingKey {
-            self.pubkey
         }
 
         pub fn sign_eth(&self, msg: &EthHash) -> Signature {
@@ -101,43 +82,6 @@ pub mod ethsig {
             sig_bytes[64] += 27;
 
             Signature(sig_bytes)
-        }
-
-        pub fn recover_address(
-            &self,
-            msg: EthHash,
-            eth_sig: Signature,
-        ) -> Result<EthAddress, Error> {
-            let hash = hash_to_eth_signed_msg_hash(&msg);
-
-            // Undo adding the 27, to go back to the format expected below
-            let mut sig_bytes: [u8; 65] = eth_sig.0;
-            sig_bytes[64] -= 27;
-
-            let sig = recoverable::Signature::from_bytes(&sig_bytes)
-                .expect("Can't fail because size is known at compile time");
-
-            let verifying_key = sig.recover_verifying_key_from_digest_bytes(&hash.0.into())?;
-            Ok(verifying_key.into())
-        }
-
-        pub fn recover_signer(
-            &self,
-            msg: EthHash,
-            eth_sig: Signature,
-        ) -> Result<VerifyingKey, Error> {
-            // "\x19Ethereum Signed Message:\n32" format
-            let hash = hash_to_eth_signed_msg_hash(&msg);
-
-            // Undo adding the 27, to go back to the format expected below
-            let mut sig_bytes: [u8; 65] = eth_sig.0;
-            sig_bytes[64] -= 27;
-
-            let sig = recoverable::Signature::from_bytes(&sig_bytes)
-                .expect("Can't fail because size is known at compile time");
-
-            let verifying_key = sig.recover_verifying_key_from_digest_bytes(&hash.0.into())?;
-            Ok(verifying_key.into())
         }
     }
 

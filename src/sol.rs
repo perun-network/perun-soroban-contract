@@ -14,9 +14,7 @@
 // limitations under the License.
 use crate::Params;
 use crate::Participant;
-use alloy_primitives::{
-    address, keccak256, Address as EthAddr, Address, Bytes as PrimBytes, FixedBytes, U256, U64,
-};
+use alloy_primitives::{keccak256, Address, Bytes as PrimBytes, U256};
 use alloy_sol_types::sol;
 use alloy_sol_types::SolValue;
 use soroban_sdk::{xdr::ToXdr, BytesN, Env};
@@ -114,45 +112,6 @@ pub fn convert_participant(e: &Env, participant: &Participant) -> ParticipantSol
         ethAddress: cc_addr_alloy,
         ccAddress: stellar_addr_alloy,
     };
-}
-
-// convert_participant converts a Participant into a ParticipantSol
-pub fn convert_participant1(e: &Env, participant: &Participant) -> ParticipantSol {
-    let mut prefixed_bytes = [0u8; 40];
-    prefixed_bytes[..8].copy_from_slice(&[0, 0, 0, 0, 0, 0, 0, 0]);
-
-    let stellar_addr_xdr = participant.stellar_addr.clone().to_xdr(&e);
-    let cc_addr = participant.cc_addr.clone();
-
-    let mut cc_addr_slice = [0u8; 20];
-    cc_addr.copy_into_slice(&mut cc_addr_slice);
-
-    let cc_addr_alloy = Address::from_slice(&cc_addr_slice);
-
-    return if stellar_addr_xdr.len() == 44 {
-        // AccountID is 44 bytes in XDR
-        let mut stellar_addr_slice = [0u8; 44];
-        stellar_addr_xdr.copy_into_slice(&mut stellar_addr_slice);
-        let stellar_addr_xdr_stripped = &stellar_addr_slice[12..];
-        prefixed_bytes[8..].copy_from_slice(stellar_addr_xdr_stripped);
-        let stellar_addr_alloy = PrimBytes::copy_from_slice(&prefixed_bytes);
-
-        ParticipantSol {
-            ethAddress: cc_addr_alloy,
-            ccAddress: stellar_addr_alloy,
-        }
-    } else {
-        // ContractID is 40 bytes in XDR
-        let mut stellar_addr_slice = [0u8; 40];
-        stellar_addr_xdr.copy_into_slice(&mut stellar_addr_slice);
-        let stellar_addr_xdr_stripped = &stellar_addr_slice[8..];
-        prefixed_bytes[8..].copy_from_slice(stellar_addr_xdr_stripped);
-        let stellar_addr_alloy = PrimBytes::copy_from_slice(&prefixed_bytes);
-        ParticipantSol {
-            ethAddress: cc_addr_alloy,
-            ccAddress: stellar_addr_alloy,
-        }
-    }
 }
 
 // Function to convert Params to ParamsSol

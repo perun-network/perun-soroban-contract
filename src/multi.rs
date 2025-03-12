@@ -1,9 +1,7 @@
 use crate::Error;
-use alloy_primitives::{
-    keccak256, Address as EthAddress, Bytes as PrimBytes, FixedBytes, U256, U64,
-};
+use alloy_primitives::FixedBytes;
 
-use soroban_sdk::{contracttype, Address, Bytes, BytesN, Env, Vec};
+use soroban_sdk::{contracttype, Address, BytesN, Env};
 #[contracttype]
 #[derive(Clone, Debug, Eq, PartialEq, Copy)]
 
@@ -13,7 +11,8 @@ impl Chain {
     pub fn new(value: u64) -> Self {
         Chain(value)
     }
-    pub fn as_u64(&self) -> u64 {  // Use `u64` here to avoid data loss
+    pub fn as_u64(&self) -> u64 {
+        // Use `u64` here to avoid data loss
         self.0
     }
 }
