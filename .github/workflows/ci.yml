@@ -29,9 +29,16 @@ jobs:
           rustup default stable
           rustup component add rust-src rustfmt clippy
           rustup target add wasm32-unknown-unknown
+      - name: Install Rust Toolchain
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          toolchain: 1.85.0
 
       - name: Clean build
-        run: cargo clean
+        run: |
+          cargo clean
+          rm -rf ~/.cargo/registry ~/.cargo/git
+          cargo update
 
       - name: Build Project
         run: cargo build --verbose
