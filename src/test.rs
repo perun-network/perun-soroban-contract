@@ -19,12 +19,11 @@ use alloy_primitives::{address, keccak256, Address as EthAddr};
 use crate::ethsig::ethsig::EthSigner;
 use crate::sol::get_channel_id_cross;
 
+use crate::convert_state;
 use crate::ethsig::ethsig::EthHash;
-use crate::{convert_state};
 use crate::{A, B};
 use alloy_sol_types::SolValue;
 use k256::ecdsa::{SigningKey, VerifyingKey};
-use k256::elliptic_curve::sec1::ToEncodedPoint;
 use rand::thread_rng;
 use soroban_sdk::token::StellarAssetClient;
 use soroban_sdk::{token, Bytes};

@@ -13,14 +13,9 @@
 // limitations under the License.
 #![cfg(test)]
 pub mod ethsig {
-    use k256::{
-        ecdsa::{
-            recoverable,
-            signature::{hazmat::PrehashSigner, Signature as k256Signature},
-            SigningKey, VerifyingKey,
-        },
-        elliptic_curve::sec1::ToEncodedPoint,
-    };
+    use alloc::borrow::ToOwned;
+    use k256::ecdsa::signature::hazmat::PrehashSigner;
+    use k256::ecdsa::{RecoveryId, Signature as k256Signature, SigningKey, VerifyingKey};
     use sha3::{Digest, Keccak256};
 
     pub struct EthHash(pub [u8; 32]);
@@ -33,8 +28,8 @@ pub mod ethsig {
         addr: EthAddress,
     }
 
-    impl From<VerifyingKey> for EthAddress {
-        fn from(key: VerifyingKey) -> Self {
+    impl From<&VerifyingKey> for EthAddress {
+        fn from(key: &VerifyingKey) -> Self {
             // Convert the key into an EncodedPoint (on the curve), which has the
             // data we need in bytes [1..]. Then convert that into an array and
             // unwrap. This panics if the bytes representation of EncodedPoint is
@@ -56,32 +51,44 @@ pub mod ethsig {
     }
 
     impl EthSigner {
-
         pub fn init_from_key(skey: SigningKey) -> Self {
-            let addr = skey.verifying_key().into();
-            let pubkey = skey.verifying_key();
+            let addr = EthAddress::from(skey.verifying_key());
+            let pubkey = skey.verifying_key().to_owned();
             Self { skey, pubkey, addr }
         }
 
         pub fn sign_eth(&self, msg: &EthHash) -> Signature {
-            //actually it is BytesN<65>, but we omit the last one, for rec =1 sign for Ethereum-type addresses
-            // "\x19Ethereum Signed Message:\n32" format
+            // Ethereum-style signed message hash
             let hash = hash_to_eth_signed_msg_hash(msg);
 
-            let sig: recoverable::Signature = self.skey.sign_prehash(&hash.0).unwrap();
+            // Use `sign_prehash()` to match old behavior (only returns `r || s`)
+            let sig: k256Signature = self.skey.sign_prehash(&hash.0).unwrap();
 
-            // Luckily for us, this Signature type already has the format we need:
-            // - 65 bytes containing r, s and v in this order
-            //
-            // But we still have to add 27 to v for the signature to be valid in the
-            // EVM.
-            let mut sig_bytes: [u8; 65] = sig.as_bytes().try_into().expect(
-                "Unreachable: Signature size doesn't match, something big must have changed in the dependency",
-            );
-            debug_assert!(sig_bytes[32] & 0x80 == 0);
-            sig_bytes[64] += 27;
+            // Convert the signature to a 65-byte array (r || s || v)
+            let mut sig_bytes: [u8; 65] = [0; 65];
+            sig_bytes[..64].copy_from_slice(&sig.to_bytes());
+
+            // We need to compute `v` manually because `sign_prehash()` does NOT return it.
+            // Ethereum requires `v = rec_id + 27`, so we need to recover `rec_id`.
+            let rec_id = self.compute_recovery_id(&hash.0, &sig);
+
+            // Set Ethereum-compatible `v` value
+            sig_bytes[64] = rec_id + 27;
 
             Signature(sig_bytes)
+        }
+
+        fn compute_recovery_id(&self, hash: &[u8; 32], sig: &k256Signature) -> u8 {
+            let rec_id_0 =
+                VerifyingKey::recover_from_prehash(hash, sig, RecoveryId::new(false, false));
+            let rec_id_1 =
+                VerifyingKey::recover_from_prehash(hash, sig, RecoveryId::new(true, false));
+
+            match (rec_id_0, rec_id_1) {
+                (Ok(pubkey_0), _) if pubkey_0 == self.pubkey => 0,
+                (_, Ok(pubkey_1)) if pubkey_1 == self.pubkey => 1,
+                _ => panic!("Failed to recover public key"),
+            }
         }
     }
 
