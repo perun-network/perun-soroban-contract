@@ -16,17 +16,15 @@ jobs:
       - name: Checkout Repository
         uses: actions/checkout@v4
 
-      - name: Force Stable Rust
+      - name: Set Rust Toolchain to Stable 1.85.0
         run: |
-          rustup override unset
-          rustup update stable
-          rustup default stable
+          rustup override set 1.85.0
           rustup show
 
       - name: Debug Rust Toolchain
         run: |
           rustc --version --verbose
-          rustup show
+          cargo --version
 
       - name: Install Dependencies
         run: |
