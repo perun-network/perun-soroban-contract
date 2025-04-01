@@ -37,7 +37,6 @@ jobs:
           cargo clean
           rm -rf target
           rm -rf ~/.cargo/registry ~/.cargo/git
-          cargo update
 
       - name: Build Project
         run: cargo build
