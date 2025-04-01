@@ -23,6 +23,7 @@ jobs:
 
       - name: Debug Rust Toolchain
         run: |
+          rustup show
           rustc --version --verbose
           cargo --version
 
@@ -34,6 +35,7 @@ jobs:
       - name: Clean Cargo Cache (Force Rebuild)
         run: |
           cargo clean
+          rm -rf target
           rm -rf ~/.cargo/registry ~/.cargo/git
           cargo update
 
