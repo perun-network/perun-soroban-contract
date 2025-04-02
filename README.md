@@ -27,3 +27,9 @@ Run tests:
 ``` sh
 cargo test
 ```
+
+To use this Payment Channel contract on the Stellar blockchain, you also need to use our [Perun Stellar Backend](https://github.com/perun-network/perun-stellar-backend).
+
+# Copyright
+
+Copyright 2024 PolyCrypt GmbH. Use of the source code is governed by the Apache 2.0 license that can be found in the [LICENSE file](LICENSE).
