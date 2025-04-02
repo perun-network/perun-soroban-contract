@@ -1,0 +1,45 @@
+name: CI - Rust Tests
+
+on:
+  push:
+    branches: [ main, dev ]
+  pull_request:
+    branches: [ main, dev ]
+
+env:
+  CARGO_TERM_COLOR: always
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout Repository
+        uses: actions/checkout@v4
+
+      - name: Set Rust Toolchain to Stable 1.85.0
+        run: |
+          rustup override set 1.85.0
+          rustup show
+
+      - name: Debug Rust Toolchain
+        run: |
+          rustup show
+          rustc --version --verbose
+          cargo --version
+
+      - name: Install Dependencies
+        run: |
+          rustup component add rust-src rustfmt clippy
+          rustup target add wasm32-unknown-unknown
+
+      - name: Clean Cargo Cache (Force Rebuild)
+        run: |
+          cargo clean
+          rm -rf target
+          rm -rf ~/.cargo/registry ~/.cargo/git
+
+      - name: Build Project
+        run: cargo build
+
+      - name: Run Tests
+        run: cargo test

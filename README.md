@@ -1,6 +1,6 @@
-<h1 align="center"><br>
-    <a href="https://perun.network/"><img src=".assets/go-perun.png" alt="Perun" width="196"></a>
-<br></h1>
+<h1 align="center">
+    <a href="https://perun.network/"><img src=".assets/go-perun.png" alt="Perun" width="30%"></a>
+</h1>
 
 <h2 align="center">Perun Soroban Contract </h2>
 
@@ -8,10 +8,13 @@
   <a href="https://www.apache.org/licenses/LICENSE-2.0.txt"><img src="https://img.shields.io/badge/license-Apache%202-blue" alt="License: Apache 2.0"></a>
 </p>
 
-# [Perun](https://perun.network/) Soroban Contract
+## Overview
+Perun's Generalized State Channels Framework uses a set of interconnected smart contracts to define the on-chain logic for channel deposits, disputes, settlements and withdrawals.
+For more detailed information, check out the [documentation](https://labs.hyperledger.org/perun-doc/index.html).
 
-This repository contains the contract that realizes Perun channels for the
-[Soroban](https://soroban.stellar.org/docs) smart contract platform. You can verify the functionality of this contract as shown below.
+# [Perun](https://perun.network/) Soroban Contract
+This repository contains the [Soroban](https://soroban.stellar.org/docs) smart contracts for [go-perun](https://github.com/hyperledger-labs/go-perun)'s [Stellar Backend](https://github.com/perun-network/perun-stellar-backend).
+Additionally, it allows cross-contract swaps with the [Ethereum Contract](https://github.com/hyperledger-labs/perun-eth-contracts) by leveraging ethereum specific cryptographic schemes to validate the Perun Channels.
 
 Build contract:
 

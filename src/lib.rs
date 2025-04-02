@@ -1,4 +1,4 @@
-// Copyright 2023 - See NOTICE file for copyright holders.
+// Copyright 2025 - See NOTICE file for copyright holders.
 //
 // Licensed under the Apache License, Version 2.0 (the "License");
 // you may not use this file except in compliance with the License.
@@ -11,18 +11,29 @@
 // WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 // See the License for the specific language governing permissions and
 // limitations under the License.
-
 #![no_std]
+
+extern crate alloc;
+use alloy_sol_types::SolValue;
 use soroban_sdk::{
-    contract,
-    contracterror, contractimpl, contracttype, token, xdr::ToXdr, Address, BytesN, Env, symbol_short,
+    contract, contracterror, contractimpl, contracttype, symbol_short, token, xdr::ToXdr, Address,
+    BytesN, Env, Vec,
+};
+
+mod ethsig;
+mod multi;
+mod sol;
+use crate::multi::CrossAsset;
+use crate::sol::get_channel_id_cross;
+use alloy_primitives::{
+    keccak256, Address as EthAddress, Bytes as PrimBytes, FixedBytes, Uint, U256,
 };
 
 #[contracterror]
 #[derive(Copy, Clone, Debug, Eq, PartialEq, PartialOrd, Ord)]
 #[repr(u32)]
 pub enum Error {
-    ChannelIDMissmatch = 1,
+    ChannelIDMismatch = 1,
     InvalidVersionNumber = 2,
     OpenOnFinalState = 3,
     ChannelAlreadyExists = 4,
@@ -43,6 +54,15 @@ pub enum Error {
     AbortFundingOnClosedChannel = 19,
     AbortFundingOnDisputedChannel = 20,
     AbortFundingWithoutFunds = 21,
+    VerificationFailed = 22,
+    InvalidPubKeyType = 23,
+    InvalidKeyType = 24,
+    ConversionError = 25,
+    WrongAssetType = 26,
+    InvalidXdrSize = 27,
+    InvalidChanIdSize = 28,
+    WrongChannelTypeErr = 29,
+    InvalidAddressType = 30,
 }
 
 #[contracttype]
@@ -51,9 +71,9 @@ pub enum Error {
 pub struct Balances {
     /// token represents a channel's asset / currency. Currently this contract
     /// supports single-asset channels, but multi-asset support is possible.
-    token: Address,
-    pub bal_a: i128,
-    pub bal_b: i128,
+    tokens: Vec<CrossAsset>,
+    pub bal_a: Vec<i128>,
+    pub bal_b: Vec<i128>,
 }
 
 #[contracttype]
@@ -68,10 +88,11 @@ pub enum ChannelID {
 pub struct Participant {
     /// addr represents the participant's on-chain address.
     /// The participant receives payments on this address.
-    pub addr: Address,
+    pub stellar_addr: Address,
+    pub cc_addr: BytesN<20>,
     /// pubkey is the participant's public key. The participant's signatures on channel
     /// states must be valid under this public key.
-    pub pubkey: BytesN<32>,
+    pub stellar_pubkey: BytesN<65>,
 }
 
 #[contracttype]
@@ -151,9 +172,11 @@ const A: bool = false;
 
 const B: bool = !A;
 
+/// STELLAR_BACKEND_IDX is the identifier for stellar specific participants or assets.
+const STELLAR_BACKEND_IDX: u64 = 2;
+
 #[contract]
 pub struct Adjudicator;
-
 
 #[contractimpl]
 impl Adjudicator {
@@ -163,11 +186,11 @@ impl Adjudicator {
         // checks
         // We verify that the sha_256 hash of the params matches the channel id
         // in the state.
-        let cid = get_channel_id(&env, &params);
+        let cid = get_channel_id_cross(&env, &params);
+
         if !cid.eq(&state.channel_id) {
-            return Err(Error::ChannelIDMissmatch);
+            return Err(Error::ChannelIDMismatch);
         }
-        // We only allow channels to be opened with initial state version number 0.
         if state.version != 0 {
             return Err(Error::InvalidVersionNumber);
         }
@@ -179,13 +202,12 @@ impl Adjudicator {
         if get_channel(&env, &cid).is_some() {
             return Err(Error::ChannelAlreadyExists);
         }
-
         // effects
         // Assemble the initial channel control struct.
         let control = Control {
             // We directly consider a channel to be funded by a party, if their balance is 0
-            funded_a: state.balances.bal_a == 0,
-            funded_b: state.balances.bal_b == 0,
+            funded_a: false,
+            funded_b: false,
             // channels are not closed, withdrawn from or disputed initially.
             closed: false,
             withdrawn_a: false,
@@ -200,8 +222,10 @@ impl Adjudicator {
         // Write the new channel to storage.
         set_channel(&env, &channel);
         // Emit open event.
-        env.events()
-            .publish((symbol_short!("perun"), symbol_short!("open")), channel.clone());
+        env.events().publish(
+            (symbol_short!("perun"), symbol_short!("open")),
+            channel.clone(),
+        );
         if is_funded(&channel) {
             env.events()
                 .publish((symbol_short!("perun"), symbol_short!("fund_c")), channel);
@@ -228,7 +252,17 @@ impl Adjudicator {
                 // Note that the transaction is rolled back, if funding fails at a later point,
                 // so doing this now is not a problem.
                 channel.control.funded_a = true; // effect
-                (channel.params.a.addr.clone(), channel.state.balances.bal_a)
+                let other_funded = get_funded(
+                    channel.state.balances.tokens.clone(),
+                    channel.state.balances.bal_b.clone(),
+                );
+                if other_funded {
+                    channel.control.funded_b = true;
+                }
+                (
+                    channel.params.a.stellar_addr.clone(),
+                    channel.state.balances.bal_a.clone(),
+                )
             }
             B => {
                 // Fund for party B.
@@ -236,7 +270,17 @@ impl Adjudicator {
                     return Err(Error::AlreadyFunded);
                 }
                 channel.control.funded_b = true; // effect
-                (channel.params.b.addr.clone(), channel.state.balances.bal_b)
+                let other_funded = get_funded(
+                    channel.state.balances.tokens.clone(),
+                    channel.state.balances.bal_a.clone(),
+                );
+                if other_funded {
+                    channel.control.funded_a = true;
+                }
+                (
+                    channel.params.b.stellar_addr.clone(),
+                    channel.state.balances.bal_b.clone(),
+                )
             }
         };
 
@@ -244,6 +288,7 @@ impl Adjudicator {
         // requiring auth here might not be strictly necessary, because this should
         // already be guarded by token.transfer, but again, it can not hurt.
         actor.require_auth();
+
         // Write the updated channel to storage.
         set_channel(&env, &channel);
         // Emit fund event.
@@ -252,15 +297,27 @@ impl Adjudicator {
             (channel.clone(), party_idx),
         );
         if is_funded(&channel) {
-            env.events()
-                .publish((symbol_short!("perun"), symbol_short!("fund_c")), channel.clone());
+            env.events().publish(
+                (symbol_short!("perun"), symbol_short!("fund_c")),
+                channel.clone(),
+            );
         }
 
-        // interact
         let contract = env.current_contract_address();
-        let token_client = token::Client::new(&env, &channel.state.balances.token);
-        // lock the party's balance to the contract.
-        token_client.transfer(&actor, &contract, &amount);
+        let tokens = &channel.state.balances.tokens;
+
+        for i in 0..tokens.len() {
+            let token = tokens.get(i).unwrap();
+            if token.chain == multi::Chain::new(STELLAR_BACKEND_IDX) {
+                let token_client = token::Client::new(&env, &token.stellar_address);
+                if let Some(amt) = amount.get(i) {
+                    if amt > 0 {
+                        token_client.transfer(&actor, &contract, &amount.get(i).unwrap());
+                    }
+                }
+            }
+        }
+
         Ok(())
     }
 
@@ -268,8 +325,8 @@ impl Adjudicator {
     pub fn close(
         env: Env,
         state: State,
-        sig_a: BytesN<64>,
-        sig_b: BytesN<64>,
+        sig_a_stellar: BytesN<65>,
+        sig_b_stellar: BytesN<65>,
     ) -> Result<(), Error> {
         // checks
         // Only final states can be closed gracefully.
@@ -285,33 +342,38 @@ impl Adjudicator {
         }
 
         // We verify both parties' signatures on the submitted final state.
-        let message = state.clone().to_xdr(&env);
-        env.crypto()
-            .ed25519_verify(&channel.params.a.pubkey, &message, &sig_a);
-        env.crypto()
-            .ed25519_verify(&channel.params.b.pubkey, &message, &sig_b);
+        let state_sol_prefix_hash = hash_state_eth_prefixed(&env, &state)?;
+
+        let pub_key_a = multi::ChannelPubKeyCross {
+            key: channel.params.a.stellar_pubkey.clone(),
+        };
+        let pub_key_b = multi::ChannelPubKeyCross {
+            key: channel.params.b.stellar_pubkey.clone(),
+        };
+        pub_key_a.verify_signature_cross(&env, state_sol_prefix_hash.clone(), &sig_a_stellar)?;
+        pub_key_b.verify_signature_cross(&env, state_sol_prefix_hash.clone(), &sig_b_stellar)?;
 
         // effects
         // Mark the channel as closed (to allow withdrawing).
         channel.control.closed = true;
         // Update the channel's state
         channel.state = state.clone();
-        // Set the parties' withdrawn bit to true, if their balance is 0
-        // in the final state.
-        channel.control.withdrawn_a = state.balances.bal_a == 0;
-        channel.control.withdrawn_b = state.balances.bal_b == 0;
 
         // Emit closed event.
-        env.events()
-            .publish((symbol_short!("perun"), symbol_short!("closed")), channel.clone());
+        env.events().publish(
+            (symbol_short!("perun"), symbol_short!("closed")),
+            channel.clone(),
+        );
 
         if is_withdrawn(&channel) {
             // If the channel is withdrawn at this point (both balances 0)
             // we can already delete it from contract storage and
             // emit a withdraw_complete event.
-            env.events()
-                .publish((symbol_short!("perun"), symbol_short!("pay_c")), channel.clone());
-            delete_channel(&env, &channel.state.channel_id)
+            env.events().publish(
+                (symbol_short!("perun"), symbol_short!("pay_c")),
+                channel.clone(),
+            );
+            delete_channel(&env, &channel.state.channel_id);
         } else {
             // Write the updated channel to contract storage.
             set_channel(&env, &channel);
@@ -344,15 +406,17 @@ impl Adjudicator {
         // effects
         // The channel is now closed, balances can be withdrawn.
         channel.control.closed = true;
-        channel.control.withdrawn_a = channel.state.balances.bal_a == 0;
-        channel.control.withdrawn_b = channel.state.balances.bal_b == 0;
         // Emit force_closed event.
-        env.events()
-            .publish((symbol_short!("perun"), symbol_short!("f_closed")), channel.clone());
+        env.events().publish(
+            (symbol_short!("perun"), symbol_short!("f_closed")),
+            channel.clone(),
+        );
         if is_withdrawn(&channel) {
             // Emit withdraw_complete event and delete the channel.
-            env.events()
-                .publish((symbol_short!("perun"), symbol_short!("pay_c")), channel.clone());
+            env.events().publish(
+                (symbol_short!("perun"), symbol_short!("pay_c")),
+                channel.clone(),
+            );
             delete_channel(&env, &channel.state.channel_id)
         } else {
             set_channel(&env, &channel);
@@ -366,8 +430,8 @@ impl Adjudicator {
     pub fn dispute(
         env: Env,
         new_state: State,
-        sig_a: BytesN<64>,
-        sig_b: BytesN<64>,
+        sig_a_stellar: BytesN<65>,
+        sig_b_stellar: BytesN<65>,
     ) -> Result<(), Error> {
         // checks
         let mut channel = get_channel(&env, &new_state.channel_id).ok_or(Error::ChannelNotFound)?;
@@ -385,11 +449,17 @@ impl Adjudicator {
         }
 
         // We verify that the new state is signed by both parties.
-        let message = new_state.clone().to_xdr(&env);
-        env.crypto()
-            .ed25519_verify(&channel.params.a.pubkey, &message, &sig_a);
-        env.crypto()
-            .ed25519_verify(&channel.params.b.pubkey, &message, &sig_b);
+        let state_sol_prefix_hash =
+            hash_state_eth_prefixed(&env, &new_state).expect("hashing state eth style failed");
+
+        let pub_key_a = multi::ChannelPubKeyCross {
+            key: channel.params.a.stellar_pubkey.clone(),
+        };
+        let pub_key_b = multi::ChannelPubKeyCross {
+            key: channel.params.b.stellar_pubkey.clone(),
+        };
+        pub_key_a.verify_signature_cross(&env, state_sol_prefix_hash.clone(), &sig_a_stellar)?;
+        pub_key_b.verify_signature_cross(&env, state_sol_prefix_hash.clone(), &sig_b_stellar)?;
 
         // effects
         // We set disputed to true and update the timestamp.
@@ -403,8 +473,10 @@ impl Adjudicator {
         set_channel(&env, &channel);
 
         // Emit a dispute event.
-        env.events()
-            .publish((symbol_short!("perun"), symbol_short!("dispute")), channel.clone());
+        env.events().publish(
+            (symbol_short!("perun"), symbol_short!("dispute")),
+            channel.clone(),
+        );
 
         Ok(())
     }
@@ -412,31 +484,54 @@ impl Adjudicator {
     /// withdraw is used to withdraw a party's balance from a closed channel.
     /// If the party_idx is false, withdraw is executed on behalf ob party A, else on behalf
     /// of party B.
-    pub fn withdraw(env: Env, channel_id: BytesN<32>, party_idx: bool) -> Result<(), Error> {
-        // checks
+    pub fn withdraw(
+        env: Env,
+        channel_id: BytesN<32>,
+        party_idx: bool,
+        one_withdrawer: bool,
+    ) -> Result<(), Error> {
+        // Retrieve the channel from storage
         let mut channel = get_channel(&env, &channel_id).ok_or(Error::ChannelNotFound)?;
+
         // Verify that the channel is closed.
         if !channel.control.closed {
             return Err(Error::WithdrawOnOpenChannel);
         }
-        let (actor, amount) = match party_idx {
+
+        // Determine the amount to withdraw based on party_idx
+        let (amount, receiver) = match party_idx {
             A => {
-                // We verify that A has not yet withdrawn (or 0 balance).
                 if channel.control.withdrawn_a {
                     return Err(Error::AlreadyFunded);
                 }
-                // We mark that A has now withdrawn.
-                channel.control.withdrawn_a = true; // effect
-                (channel.params.a.addr.clone(), channel.state.balances.bal_a)
+
+                (
+                    channel.state.balances.bal_a.clone(),
+                    channel.params.a.stellar_addr.clone(),
+                )
             }
             B => {
                 if channel.control.withdrawn_b {
                     return Err(Error::AlreadyFunded);
                 }
-                channel.control.withdrawn_b = true; // effect
-                (channel.params.b.addr.clone(), channel.state.balances.bal_b)
+                (
+                    channel.state.balances.bal_b.clone(),
+                    channel.params.b.stellar_addr.clone(),
+                )
             }
         };
+
+        // Always authenticate as party B if oneWithdrawer is true
+        let actor = if one_withdrawer {
+            channel.params.b.stellar_addr.clone()
+        } else {
+            match party_idx {
+                A => channel.params.a.stellar_addr.clone(),
+                B => channel.params.b.stellar_addr.clone(),
+            }
+        };
+
+        // Perform the authentication
         actor.require_auth();
 
         // Emit a withdraw event with the party index.
@@ -445,21 +540,58 @@ impl Adjudicator {
             (channel.clone(), party_idx),
         );
 
-        // effects
+        // Perform the token transfers
+        let contract = env.current_contract_address();
+
+        let tokens = &channel.state.balances.tokens;
+
+        for i in 0..tokens.len() {
+            let token = &tokens.get(i).unwrap();
+            if token.chain == multi::Chain::new(STELLAR_BACKEND_IDX) {
+                let token_client = token::Client::new(&env, &token.stellar_address);
+                if let Some(amt) = amount.get(i) {
+                    if amt > 0 {
+                        token_client.transfer(&contract, &receiver, &amt);
+                    }
+                }
+            }
+        }
+
+        // Mark the appropriate party's withdrawal as complete
+        match party_idx {
+            A => {
+                channel.control.withdrawn_a = true;
+                let b_withdrawn = get_withdrawn(
+                    channel.state.balances.tokens.clone(),
+                    channel.state.balances.bal_b.clone(),
+                );
+                if b_withdrawn {
+                    channel.control.withdrawn_b = true;
+                }
+            }
+            B => {
+                channel.control.withdrawn_b = true;
+                let a_withdrawn = get_withdrawn(
+                    channel.state.balances.tokens.clone(),
+                    channel.state.balances.bal_a.clone(),
+                );
+                if a_withdrawn {
+                    channel.control.withdrawn_a = true;
+                }
+            }
+        }
+
+        // Handle channel state post-withdrawal
         if is_withdrawn(&channel) {
-            // If the channel is withdrawn completely, emit an according event and delete it.
-            env.events()
-                .publish((symbol_short!("perun"), symbol_short!("pay_c")), channel.clone());
+            // If the channel is completely withdrawn, emit a corresponding event and delete it.
+            env.events().publish(
+                (symbol_short!("perun"), symbol_short!("pay_c")),
+                channel.clone(),
+            );
             delete_channel(&env, &channel_id);
         } else {
             set_channel(&env, &channel);
         }
-
-        // interact
-        let contract = env.current_contract_address();
-        let token_client = token::Client::new(&env, &channel.state.balances.token);
-        // transfer the correct amount to the withdrawing party.
-        token_client.transfer(&contract, &actor, &amount);
 
         Ok(())
     }
@@ -491,11 +623,11 @@ impl Adjudicator {
         // Now we identify that party.
         let (actor, amount) = match channel.control.funded_a {
             true => (
-                channel.params.a.addr.clone(),
+                channel.params.a.stellar_addr.clone(),
                 channel.state.balances.bal_a.clone(),
             ),
             false => (
-                channel.params.b.addr.clone(),
+                channel.params.b.stellar_addr.clone(),
                 channel.state.balances.bal_b.clone(),
             ),
         };
@@ -509,9 +641,19 @@ impl Adjudicator {
 
         // interact
         let contract = env.current_contract_address();
-        let token_client = token::Client::new(&env, &channel.state.balances.token);
-        // The reclaimed funding is returned to the party.
-        token_client.transfer(&contract, &actor, &amount);
+        let tokens = &channel.state.balances.tokens;
+
+        for i in 0..tokens.len() {
+            let token = &tokens.get(i).unwrap();
+            if token.chain == multi::Chain::new(STELLAR_BACKEND_IDX) {
+                let token_client = token::Client::new(&env, &token.stellar_address);
+                if let Some(amt) = amount.get(i) {
+                    if amt > 0 {
+                        token_client.transfer(&contract, &actor, &amt);
+                    }
+                }
+            }
+        }
 
         Ok(())
     }
@@ -531,12 +673,16 @@ pub fn get_channel(env: &Env, id: &BytesN<32>) -> Option<Channel> {
 /// set_channel writes the given channel to persistent storage.
 /// The key is the channel id in the channel's state.
 pub fn set_channel(env: &Env, channel: &Channel) {
-    env.storage().persistent().set(&ChannelID::ID(channel.state.channel_id.clone()), channel);
+    env.storage()
+        .persistent()
+        .set(&ChannelID::ID(channel.state.channel_id.clone()), channel);
 }
 
 /// delete_channel deletes the channel with the given id from persistent storage.
 pub fn delete_channel(env: &Env, channel_id: &BytesN<32>) {
-    env.storage().persistent().remove(&ChannelID::ID(channel_id.clone()));
+    env.storage()
+        .persistent()
+        .remove(&ChannelID::ID(channel_id.clone()));
 }
 
 /// get_channel_id returns the channel id for the given channel parameters.
@@ -576,12 +722,16 @@ pub fn is_valid_state_transition(old: &State, new: &State) -> bool {
     }
     // Both states must have "coherent balances". That means they must:
     // a) share the same token as asset / currency
-    if old.balances.token != new.balances.token {
+    if old.balances.tokens != new.balances.tokens {
         return false;
     }
-    // b) The sum of the balances must be equal.
-    if old.balances.bal_a + old.balances.bal_b != new.balances.bal_a + new.balances.bal_b {
-        return false;
+    // // b) The sum of the balances must be equal.
+    for i in 0..old.balances.bal_a.len() {
+        if (old.balances.bal_a.get(i).unwrap() + old.balances.bal_b.get(i).unwrap())
+            != new.balances.bal_a.get(i).unwrap() + new.balances.bal_b.get(i).unwrap()
+        {
+            return false;
+        }
     }
     return true;
 }
@@ -605,6 +755,178 @@ pub fn is_timelock_expired(env: &Env, channel: &Channel) -> bool {
     }
     let current_time = env.ledger().timestamp();
     return channel.control.timestamp + channel.params.challenge_duration <= current_time;
+}
+
+pub fn convert_cross_assets(
+    e: &Env,
+    cross_assets: &Vec<CrossAsset>, // Ensure this is your CrossAsset struct
+) -> Result<(sol::AssetSol, sol::AssetSol), Error> {
+    if cross_assets.len() != 2 {
+        return Err(Error::ConversionError);
+    }
+
+    let convert_asset = |cross_asset: &CrossAsset| -> Result<sol::AssetSol, Error> {
+        let chain_id = U256::from(cross_asset.chain.as_u64());
+
+        // Define zero addresses
+        let zero_eth_address = EthAddress::from_slice(&[0u8; 20]);
+        let zero_stellar_address = PrimBytes::copy_from_slice(&[0u8; 32]);
+
+        // Extract addresses from the CrossAsset
+        let eth_address = &cross_asset.eth_address;
+        let stellar_address = &cross_asset.stellar_address;
+
+        // Create the holders based on the presence of addresses
+        let (eth_holder, cc_holder) = if chain_id != Uint::try_from(STELLAR_BACKEND_IDX).unwrap() {
+            // If there's a valid Ethereum address, use it
+            let mut eth_addr_slice = [0u8; 20];
+            eth_address.copy_into_slice(&mut eth_addr_slice);
+            let eth_addr_sol = EthAddress::from_slice(&eth_addr_slice);
+            (eth_addr_sol, zero_stellar_address) // Set Stellar holder to zero
+        } else {
+            let cc_holder_xdr = stellar_address.to_xdr(e);
+
+            let mut cc_holder_slice = [0u8; 40];
+            cc_holder_xdr.copy_into_slice(&mut cc_holder_slice);
+            let stripped_cc_holder_slice = &cc_holder_slice[8..];
+
+            let cc_holder_sol = PrimBytes::copy_from_slice(&stripped_cc_holder_slice);
+            (zero_eth_address, cc_holder_sol)
+        };
+
+        Ok(sol::AssetSol {
+            chainID: chain_id,
+            ethHolder: eth_holder,
+            ccHolder: cc_holder,
+        })
+    };
+
+    let asset_0 = convert_asset(&cross_assets.get_unchecked(0))?;
+    let asset_1 = convert_asset(&cross_assets.get_unchecked(1))?;
+
+    Ok((asset_0, asset_1))
+}
+
+pub fn convert_allocation(e: &Env, state: &State) -> Result<sol::AllocationSol, Error> {
+    // Ensure that there are exactly two cross-chain assets
+    let cross_assets = &state.balances.tokens;
+    // Determine backends based on the address types in cross_assets
+    let backends: [U256; 2] = [
+        {
+            // Check if the chain is 2
+            if cross_assets.get_unchecked(0).chain != multi::Chain::new(STELLAR_BACKEND_IDX) {
+                U256::from(1) // Ethereum
+            } else {
+                U256::from(STELLAR_BACKEND_IDX) // Stellar
+            }
+        },
+        {
+            // Check if the chain is 2
+            if cross_assets.get_unchecked(1).chain != multi::Chain::new(STELLAR_BACKEND_IDX) {
+                U256::from(1) // Ethereum
+            } else {
+                U256::from(STELLAR_BACKEND_IDX) // Stellar
+            }
+        },
+    ];
+
+    // Use convert_cross_assets to convert both assets
+    let (asset_sol_0, asset_sol_1) = convert_cross_assets(e, &cross_assets)?;
+
+    // Convert balances
+    let bals_cc_a = U256::from(state.balances.bal_a.get(0).ok_or(Error::ConversionError)?);
+    let bals_stellar_a = U256::from(state.balances.bal_a.get(1).ok_or(Error::ConversionError)?);
+    let bals_cc_b = U256::from(state.balances.bal_b.get(0).ok_or(Error::ConversionError)?);
+    let bals_stellar_b = U256::from(state.balances.bal_b.get(1).ok_or(Error::ConversionError)?);
+
+    // Construct the AllocationSol with the vectors
+    Ok(sol::AllocationSol {
+        assets: [asset_sol_0, asset_sol_1].to_vec(), // Directly convert to a vector
+        backends: backends.to_vec(),
+        balances: [
+            [bals_cc_a, bals_cc_b].to_vec(),
+            [bals_stellar_a, bals_stellar_b].to_vec(),
+        ]
+        .to_vec(),
+        locked: [].to_vec(),
+    })
+}
+
+pub fn convert_state(e: &Env, state: &State) -> Result<sol::StateSol, Error> {
+    // let channel_id_xdr = state.channel_id.clone().to_xdr(e);
+
+    let channel_id = state.channel_id.clone();
+
+    // Define the expected length
+    let chanid_len = 32;
+
+    // Check if the length of channel_id_xdr matches the expected length
+    if channel_id.len() != chanid_len {
+        return Err(Error::InvalidChanIdSize); // Ensure this error variant is defined
+    }
+
+    let mut channel_id_slice = [0u8; 32];
+
+    channel_id.copy_into_slice(&mut channel_id_slice);
+
+    let channel_id_alloy = FixedBytes::from_slice(&channel_id_slice);
+    let app_data_alloy = PrimBytes::copy_from_slice(&[]);
+    let is_final_alloy = state.finalized;
+
+    let outcome = convert_allocation(e, state)?;
+
+    // 1 for Ethereum, 2 for Stellar
+    Ok(sol::StateSol {
+        channelID: channel_id_alloy,
+        version: state.version,
+        outcome,
+        appData: app_data_alloy,
+        isFinal: is_final_alloy,
+    })
+}
+
+pub fn hash_state_eth_prefixed(e: &Env, state: &State) -> Result<FixedBytes<32>, Error> {
+    let state_sik = convert_state(&e, &state)?;
+
+    let state_abienc = state_sik.abi_encode();
+    let state_sol_hashed = keccak256(&state_abienc);
+    let prefix = b"\x19Ethereum Signed Message:\n32";
+    let prefix_hash = [prefix.as_ref(), &state_sol_hashed[..]].concat();
+
+    let state_sol_prefix_hash = keccak256(&prefix_hash);
+    Ok(state_sol_prefix_hash)
+}
+
+/// get_funded looks if other party has to fund
+fn get_funded(tokens: Vec<CrossAsset>, amount: Vec<i128>) -> bool {
+    let mut funded = true;
+    for i in 0..tokens.len() {
+        let token = tokens.get(i).unwrap();
+        if token.chain == multi::Chain::new(STELLAR_BACKEND_IDX) {
+            if let Some(amt) = amount.get(i) {
+                if amt > 0 {
+                    funded = false
+                }
+            }
+        }
+    }
+    return funded;
+}
+
+/// get_withdrawn looks if other party has to withdraw
+fn get_withdrawn(tokens: Vec<CrossAsset>, amount: Vec<i128>) -> bool {
+    let mut withdrawn = true;
+    for i in 0..tokens.len() {
+        let token = tokens.get(i).unwrap();
+        if token.chain == multi::Chain::new(STELLAR_BACKEND_IDX) {
+            if let Some(amt) = amount.get(i) {
+                if amt > 0 {
+                    withdrawn = false
+                }
+            }
+        }
+    }
+    return withdrawn;
 }
 
 #[cfg(test)]
