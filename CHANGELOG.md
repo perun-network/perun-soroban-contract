@@ -1,7 +1,8 @@
 # Changelog
 All notable changes to this project will be documented in this file.
 
-## [0.3.0] Baintha - 2025-03-12
+## [0.7.0] Ada - 2025-04-08
+
 ### Changed
 * Extend to Multi-Asset Support [#11], [#12]
 * Adapt Contract to Ethereum Channels [#10], [#14]
