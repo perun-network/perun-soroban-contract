@@ -15,10 +15,7 @@
 
 extern crate alloc;
 use alloy_sol_types::SolValue;
-use soroban_sdk::{
-    contract, contracterror, contractimpl, contracttype, symbol_short, token, xdr::ToXdr, Address,
-    BytesN, Env, Vec,
-};
+use soroban_sdk::{contract, contracterror, contractimpl, contracttype, symbol_short, token, xdr::ToXdr, Address, BytesN, Env, Vec, Bytes};
 
 mod ethsig;
 mod multi;
@@ -28,6 +25,7 @@ use crate::sol::get_channel_id_cross;
 use alloy_primitives::{
     keccak256, Address as EthAddress, Bytes as PrimBytes, FixedBytes, Uint, U256,
 };
+use soroban_sdk::crypto::Hash;
 
 #[contracterror]
 #[derive(Copy, Clone, Debug, Eq, PartialEq, PartialOrd, Ord)]
@@ -686,7 +684,7 @@ pub fn delete_channel(env: &Env, channel_id: &BytesN<32>) {
 }
 
 /// get_channel_id returns the channel id for the given channel parameters.
-pub fn get_channel_id(env: &Env, params: &Params) -> BytesN<32> {
+pub fn get_channel_id(env: &Env, params: &Params) -> Hash<32> {
     let data = params.clone().to_xdr(env);
     return env.crypto().sha256(&data);
 }
@@ -885,15 +883,18 @@ pub fn convert_state(e: &Env, state: &State) -> Result<sol::StateSol, Error> {
     })
 }
 
-pub fn hash_state_eth_prefixed(e: &Env, state: &State) -> Result<FixedBytes<32>, Error> {
+pub fn hash_state_eth_prefixed(e: &Env, state: &State) -> Result<Hash<32>, Error> {
     let state_sik = convert_state(&e, &state)?;
 
     let state_abienc = state_sik.abi_encode();
     let state_sol_hashed = keccak256(&state_abienc);
     let prefix = b"\x19Ethereum Signed Message:\n32";
-    let prefix_hash = [prefix.as_ref(), &state_sol_hashed[..]].concat();
+    let prefix_hash_vec = [prefix.as_ref(), &state_sol_hashed[..]].concat();
 
-    let state_sol_prefix_hash = keccak256(&prefix_hash);
+    let mut prefix_hash_bytes = Bytes::new(e);
+    prefix_hash_bytes.extend_from_slice(&prefix_hash_vec);
+
+    let state_sol_prefix_hash = e.crypto().keccak256(&prefix_hash_bytes);
     Ok(state_sol_prefix_hash)
 }
 
