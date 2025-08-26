@@ -542,7 +542,7 @@ fn setup(
 ) -> Test<'static> {
     let ledgerinf = LedgerInfo {
         timestamp: 0,
-        protocol_version: 22,
+        protocol_version: 23,
         sequence_number: 10,
         network_id: Default::default(),
         base_reserve: 10,
