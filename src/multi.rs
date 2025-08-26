@@ -1,5 +1,4 @@
 use crate::Error;
-use alloy_primitives::FixedBytes;
 
 use soroban_sdk::{contracttype, Address, BytesN, Env};
 use soroban_sdk::crypto::Hash;
