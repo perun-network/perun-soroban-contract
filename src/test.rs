@@ -542,7 +542,7 @@ fn setup(
 ) -> Test<'static> {
     let ledgerinf = LedgerInfo {
         timestamp: 0,
-        protocol_version: 1,
+        protocol_version: 23,
         sequence_number: 10,
         network_id: Default::default(),
         base_reserve: 10,
@@ -639,10 +639,8 @@ fn setup(
     if mixed_assets == false {
         for i in 0..bal_a.len() {
             let admin_address = Address::generate(&e);
-            let token_admin = StellarAssetClient::new(
-                &e,
-                &e.register_stellar_asset_contract(admin_address.clone()),
-            );
+            let stellar_asset_contract = e.register_stellar_asset_contract_v2(admin_address.clone());
+            let token_admin = StellarAssetClient::new(&e, &stellar_asset_contract.address());
             token_addresses.push_back(token_admin.address.clone());
 
             token_admin.mint(&alice.stellar_addr, &bal_a.get(i).unwrap());
@@ -663,10 +661,8 @@ fn setup(
 
     if mixed_assets {
         let admin_address = Address::generate(&e);
-        let token_admin = StellarAssetClient::new(
-            &e,
-            &e.register_stellar_asset_contract(admin_address.clone()),
-        );
+        let stellar_asset_contract = e.register_stellar_asset_contract_v2(admin_address.clone());
+        let token_admin = StellarAssetClient::new(&e, &stellar_asset_contract.address());
         token_addresses.push_back(token_admin.address.clone());
 
         token_admin.mint(&alice.stellar_addr, &bal_a.get(0).unwrap());
@@ -715,7 +711,7 @@ fn setup(
         version: 0,
         finalized: false,
     };
-    let client = AdjudicatorClient::new(&e, &e.register_contract(None, Adjudicator {}));
+    let client = AdjudicatorClient::new(&e, &e.register(Adjudicator, {}));
     Test {
         env: e.clone(),
         alice,
